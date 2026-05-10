@@ -1,0 +1,357 @@
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"strings"
+
+	"github.com/Mercwri/innovade/internal/models"
+)
+
+// GetCard retrieves a single card by its card code (e.g. "GD01-001").
+// Returns sql.ErrNoRows if not found.
+func (s *Store) GetCard(cardCode string) (*models.Card, error) {
+	row := s.db.QueryRow(`
+		SELECT id, card_code, set_code, name, category, rarity, created_at,
+		       cost, level, ap, hp, effect, burst, link_requirement, default_image_path
+		FROM cards WHERE card_code = ?`, cardCode)
+
+	card, err := scanCard(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.hydrateCard(card); err != nil {
+		return nil, err
+	}
+	return card, nil
+}
+
+// QueryCards returns cards matching the given query, with sort and pagination.
+func (s *Store) QueryCards(q models.CardQuery) ([]models.Card, error) {
+	sb := &strings.Builder{}
+	args := []any{}
+
+	sb.WriteString(`
+		SELECT DISTINCT c.id, c.card_code, c.set_code, c.name, c.category, c.rarity,
+		       c.created_at, c.cost, c.level, c.ap, c.hp,
+		       c.effect, c.burst, c.link_requirement, c.default_image_path
+		FROM cards c
+	`)
+
+	// JOIN only when filtering on child tables
+	f := q.Filter
+	if len(f.Colors) > 0 {
+		sb.WriteString(" JOIN card_colors cc ON cc.card_code = c.card_code")
+	}
+	if f.Type != "" {
+		sb.WriteString(" JOIN card_types ct ON ct.card_code = c.card_code")
+	}
+	if len(f.Locations) > 0 {
+		sb.WriteString(" JOIN card_locations cl ON cl.card_code = c.card_code")
+	}
+
+	conditions := []string{}
+
+	if f.Name != "" {
+		conditions = append(conditions, "c.name LIKE ?")
+		args = append(args, "%"+f.Name+"%")
+	}
+	if len(f.Categories) > 0 {
+		conditions = append(conditions, "c.category IN ("+placeholders(len(f.Categories))+")")
+		for _, cat := range f.Categories {
+			args = append(args, string(cat))
+		}
+	}
+	if f.ExcludeTokens {
+		conditions = append(conditions, "c.category != 'Unit-token'")
+	}
+	if len(f.Rarities) > 0 {
+		conditions = append(conditions, "c.rarity IN ("+placeholders(len(f.Rarities))+")")
+		for _, r := range f.Rarities {
+			args = append(args, string(r))
+		}
+	}
+	if len(f.Colors) > 0 {
+		conditions = append(conditions, "cc.color IN ("+placeholders(len(f.Colors))+")")
+		for _, col := range f.Colors {
+			args = append(args, string(col))
+		}
+	}
+	if f.Type != "" {
+		conditions = append(conditions, "ct.type = ?")
+		args = append(args, f.Type)
+	}
+	if len(f.Locations) > 0 {
+		conditions = append(conditions, "cl.location IN ("+placeholders(len(f.Locations))+")")
+		for _, loc := range f.Locations {
+			args = append(args, string(loc))
+		}
+	}
+	if f.SetCode != "" {
+		conditions = append(conditions, "c.set_code = ?")
+		args = append(args, f.SetCode)
+	}
+	if f.MinCost != nil {
+		conditions = append(conditions, "c.cost >= ?")
+		args = append(args, *f.MinCost)
+	}
+	if f.MaxCost != nil {
+		conditions = append(conditions, "c.cost <= ?")
+		args = append(args, *f.MaxCost)
+	}
+	if f.MinLevel != nil {
+		conditions = append(conditions, "c.level >= ?")
+		args = append(args, *f.MinLevel)
+	}
+	if f.MaxLevel != nil {
+		conditions = append(conditions, "c.level <= ?")
+		args = append(args, *f.MaxLevel)
+	}
+	if f.MinAP != nil {
+		conditions = append(conditions, "c.ap >= ?")
+		args = append(args, *f.MinAP)
+	}
+	if f.MaxAP != nil {
+		conditions = append(conditions, "c.ap <= ?")
+		args = append(args, *f.MaxAP)
+	}
+	if f.MinHP != nil {
+		conditions = append(conditions, "c.hp >= ?")
+		args = append(args, *f.MinHP)
+	}
+	if f.MaxHP != nil {
+		conditions = append(conditions, "c.hp <= ?")
+		args = append(args, *f.MaxHP)
+	}
+	if f.HasBurst != nil {
+		if *f.HasBurst {
+			conditions = append(conditions, "c.burst != ''")
+		} else {
+			conditions = append(conditions, "c.burst = ''")
+		}
+	}
+	if f.HasLinkRequirement != nil {
+		if *f.HasLinkRequirement {
+			conditions = append(conditions, "c.link_requirement != ''")
+		} else {
+			conditions = append(conditions, "c.link_requirement = ''")
+		}
+	}
+
+	if len(conditions) > 0 {
+		sb.WriteString(" WHERE " + strings.Join(conditions, " AND "))
+	}
+
+	// Sort
+	sortCol := "c.card_code" // safe default
+	validSorts := map[models.SortField]string{
+		models.SortByName:     "c.name COLLATE NOCASE",
+		models.SortByCost:     "c.cost",
+		models.SortByLevel:    "c.level",
+		models.SortByAP:       "c.ap",
+		models.SortByHP:       "c.hp",
+		models.SortBySetCode:  "c.set_code",
+		models.SortByCardCode: "c.card_code",
+		models.SortByRarity:   "c.rarity",
+	}
+	if col, ok := validSorts[q.SortBy]; ok {
+		sortCol = col
+	}
+	order := "ASC"
+	if q.Order == models.SortDesc {
+		order = "DESC"
+	}
+	sb.WriteString(fmt.Sprintf(" ORDER BY %s %s", sortCol, order))
+
+	if q.Limit > 0 {
+		sb.WriteString(" LIMIT ?")
+		args = append(args, q.Limit)
+		if q.Offset > 0 {
+			sb.WriteString(" OFFSET ?")
+			args = append(args, q.Offset)
+		}
+	}
+
+	rows, err := s.db.Query(sb.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("query cards: %w", err)
+	}
+	defer rows.Close()
+
+	var cards []models.Card
+	for rows.Next() {
+		card, err := scanCard(rows)
+		if err != nil {
+			return nil, err
+		}
+		cards = append(cards, *card)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Hydrate child fields (colors, types, locations, images) for all cards
+	// in a single pass per table to avoid N+1 queries.
+	if err := s.hydrateCards(cards); err != nil {
+		return nil, err
+	}
+
+	return cards, nil
+}
+
+// GetAllSets returns all known card sets ordered by code.
+func (s *Store) GetAllSets() ([]models.CardSet, error) {
+	rows, err := s.db.Query(`SELECT code, name, set_type FROM card_sets ORDER BY code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sets []models.CardSet
+	for rows.Next() {
+		var cs models.CardSet
+		var st string
+		if err := rows.Scan(&cs.Code, &cs.Name, &st); err != nil {
+			return nil, err
+		}
+		cs.SetType = models.SetType(st)
+		sets = append(sets, cs)
+	}
+	return sets, rows.Err()
+}
+
+// CountCards returns the number of cards matching the filter (ignores pagination).
+func (s *Store) CountCards(f models.CardFilter) (int, error) {
+	q := models.CardQuery{Filter: f}
+	// Re-use QueryCards but only ask for count — build minimal query.
+	cards, err := s.QueryCards(q)
+	if err != nil {
+		return 0, err
+	}
+	return len(cards), nil
+}
+
+// --- scanning helpers ---
+
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func scanCard(row scanner) (*models.Card, error) {
+	var c models.Card
+	var createdAt string
+	err := row.Scan(
+		&c.ID, &c.CardCode, &c.SetCode, &c.Name,
+		(*string)(&c.Category), (*string)(&c.Rarity),
+		&createdAt,
+		&c.Cost, &c.Level, &c.AP, &c.HP,
+		&c.Effect, &c.Burst, &c.LinkRequirement,
+		&c.DefaultImagePath,
+	)
+	if err == sql.ErrNoRows {
+		return nil, sql.ErrNoRows
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan card: %w", err)
+	}
+	return &c, nil
+}
+
+// hydrateCard populates child fields for a single card.
+func (s *Store) hydrateCard(c *models.Card) error {
+	cards := []models.Card{*c}
+	if err := s.hydrateCards(cards); err != nil {
+		return err
+	}
+	*c = cards[0]
+	return nil
+}
+
+// hydrateCards bulk-loads colors, types, locations, and images for a slice of
+// cards using one query per child table, avoiding N+1 queries.
+func (s *Store) hydrateCards(cards []models.Card) error {
+	if len(cards) == 0 {
+		return nil
+	}
+
+	codes := make([]any, len(cards))
+	index := make(map[string]int, len(cards))
+	for i, c := range cards {
+		codes[i] = c.CardCode
+		index[c.CardCode] = i
+	}
+	ph := placeholders(len(codes))
+
+	// Colors
+	rows, err := s.db.Query("SELECT card_code, color FROM card_colors WHERE card_code IN ("+ph+")", codes...)
+	if err != nil {
+		return fmt.Errorf("hydrate colors: %w", err)
+	}
+	for rows.Next() {
+		var code, color string
+		if err := rows.Scan(&code, &color); err != nil {
+			rows.Close()
+			return err
+		}
+		i := index[code]
+		cards[i].Colors = append(cards[i].Colors, models.Color(color))
+	}
+	rows.Close()
+
+	// Types
+	rows, err = s.db.Query("SELECT card_code, type FROM card_types WHERE card_code IN ("+ph+") ORDER BY sort_order", codes...)
+	if err != nil {
+		return fmt.Errorf("hydrate types: %w", err)
+	}
+	for rows.Next() {
+		var code, t string
+		if err := rows.Scan(&code, &t); err != nil {
+			rows.Close()
+			return err
+		}
+		i := index[code]
+		cards[i].Types = append(cards[i].Types, t)
+	}
+	rows.Close()
+
+	// Locations
+	rows, err = s.db.Query("SELECT card_code, location FROM card_locations WHERE card_code IN ("+ph+")", codes...)
+	if err != nil {
+		return fmt.Errorf("hydrate locations: %w", err)
+	}
+	for rows.Next() {
+		var code, loc string
+		if err := rows.Scan(&code, &loc); err != nil {
+			rows.Close()
+			return err
+		}
+		i := index[code]
+		cards[i].Locations = append(cards[i].Locations, models.Location(loc))
+	}
+	rows.Close()
+
+	// Images
+	rows, err = s.db.Query("SELECT card_code, image_path FROM card_images WHERE card_code IN ("+ph+") ORDER BY sort_order", codes...)
+	if err != nil {
+		return fmt.Errorf("hydrate images: %w", err)
+	}
+	for rows.Next() {
+		var code, path string
+		if err := rows.Scan(&code, &path); err != nil {
+			rows.Close()
+			return err
+		}
+		i := index[code]
+		cards[i].ImagePaths = append(cards[i].ImagePaths, path)
+	}
+	rows.Close()
+
+	return nil
+}
+
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.Repeat("?,", n-1) + "?"
+}
