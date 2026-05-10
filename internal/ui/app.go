@@ -174,7 +174,7 @@ type importResultMsg struct {
 
 func importCardsCmd(s *store.Store) tea.Cmd {
 	return func() tea.Msg {
-		imported, err := s.ImportCardsFromJSON(filepath.Join("tmp", "cards.json"))
+		imported, err := s.ImportCardsFromJSON(filepath.Join("data", "cards.json"))
 		return importResultMsg{imported: imported, err: err}
 	}
 }
