@@ -30,6 +30,9 @@ type LibraryKeys struct {
 	AddToDeck      key.Binding
 	RemoveFromDeck key.Binding
 	FindLinks      key.Binding
+	ClearFilters   key.Binding
+	OpenFilter     key.Binding
+	TextFilter     key.Binding
 }
 
 var Library = LibraryKeys{
@@ -68,6 +71,18 @@ var Library = LibraryKeys{
 	FindLinks: key.NewBinding(
 		key.WithKeys("l"),
 		key.WithHelp("l", "find links"),
+	),
+	ClearFilters: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "clear filters"),
+	),
+	OpenFilter: key.NewBinding(
+		key.WithKeys("f"),
+		key.WithHelp("f", "filter"),
+	),
+	TextFilter: key.NewBinding(
+		key.WithKeys("t"),
+		key.WithHelp("t", "text search"),
 	),
 }
 

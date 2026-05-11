@@ -20,10 +20,10 @@ type exportResultMsg struct {
 //
 //	4 GD01-044 Kshatriya
 //	2 ST08-002 Ξ Gundam
-func formatDeckList(deck *models.Deck, cardNames map[string]string) string {
+func formatDeckList(deck *models.Deck, nameFor func(string) string) string {
 	var sb strings.Builder
 	for _, e := range deck.Entries {
-		name := cardNames[e.CardCode]
+		name := nameFor(e.CardCode)
 		if name == "" {
 			name = e.CardCode
 		}
@@ -32,9 +32,9 @@ func formatDeckList(deck *models.Deck, cardNames map[string]string) string {
 	return sb.String()
 }
 
-func exportDeckCmd(deck models.Deck, cardNames map[string]string) tea.Cmd {
+func exportDeckCmd(deck models.Deck, nameFor func(string) string) tea.Cmd {
 	return func() tea.Msg {
-		text := formatDeckList(&deck, cardNames)
+		text := formatDeckList(&deck, nameFor)
 		path := sanitizeFilename(deck.Name) + ".txt"
 		err := os.WriteFile(path, []byte(text), 0644)
 		return exportResultMsg{path: path, err: err}

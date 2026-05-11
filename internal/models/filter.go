@@ -40,13 +40,21 @@ type CardFilter struct {
 	// "Pilot" trait. Takes precedence over the Categories filter when set.
 	FindPilots bool
 
-	// PilotLinkTerms: terms parsed from a unit's link requirement (e.g. ["Amuro Ray"]).
-	// Returns pilot-eligible cards whose name or traits match ANY term.
-	PilotLinkTerms []string
+	// PilotLinkNames: pilot names from a unit's "[Name]" link requirement terms.
+	// Matches pilot-eligible cards whose name contains any of these.
+	PilotLinkNames []string
 
-	// UnitLinkTerms: a pilot's name and traits. Returns Unit cards whose
-	// link_requirement contains ANY of these strings.
-	UnitLinkTerms []string
+	// PilotLinkTraits: trait names from a unit's "(Trait)" link requirement terms.
+	// Matches pilot-eligible cards that have any of these as an exact card type.
+	PilotLinkTraits []string
+
+	// UnitLinkNames: a pilot's name. Matches Unit cards whose link_requirement
+	// contains "[Name]" (bracket-bounded for precision).
+	UnitLinkNames []string
+
+	// UnitLinkTraits: a pilot's non-pilot traits. Matches Unit cards whose
+	// link_requirement contains "(Trait)" (paren-bounded for precision).
+	UnitLinkTraits []string
 
 	// Description overrides the auto-generated status-bar summary for this filter.
 	Description string

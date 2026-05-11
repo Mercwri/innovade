@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($json = Get-Content C:\\\\Users\\\\Michael\\\\innovade\\\\data\\\\cards.json -Raw | ConvertFrom-Json; $json | Where-Object { $_.card_code -eq 'GD01-007' } | ConvertTo-Json -Depth 5)",
+      "Bash(node)",
+      "Bash(go build *)"
+    ]
+  }
+}

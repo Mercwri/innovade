@@ -86,11 +86,13 @@ var filterKeys = struct {
 	Select key.Binding
 	Up     key.Binding
 	Down   key.Binding
+	Space  key.Binding
 }{
 	Close:  key.NewBinding(key.WithKeys("esc")),
 	Select: key.NewBinding(key.WithKeys("enter")),
 	Up:     key.NewBinding(key.WithKeys("up", "k")),
 	Down:   key.NewBinding(key.WithKeys("down", "j")),
+	Space:  key.NewBinding(key.WithKeys(" ")),
 }
 
 // column widths; labelW+hintW must equal overlayW-2 (item padding eats 2).
@@ -108,6 +110,7 @@ type FilterPalette struct {
 	cursor        int
 	current       models.CardFilter
 	filtersActive bool
+	pendingColors []models.Color // staged selection for the color phase
 }
 
 func NewFilterPalette(current models.CardFilter, active bool) FilterPalette {
@@ -172,14 +175,8 @@ func (m FilterPalette) enterPhase(phase filterPhase) FilterPalette {
 
 	switch phase {
 	case phaseColorSelect:
-		if len(m.current.Colors) == 1 {
-			for i, e := range colorEntries {
-				if e.color == m.current.Colors[0] {
-					m.cursor = i
-					break
-				}
-			}
-		}
+		m.pendingColors = make([]models.Color, len(m.current.Colors))
+		copy(m.pendingColors, m.current.Colors)
 	case phaseCategorySelect:
 		// Pre-select the current active category, accounting for FindPilots mode.
 		activeCat := models.Category("")
@@ -220,16 +217,34 @@ func (m FilterPalette) updateColorSelect(msg tea.Msg) (FilterPalette, FilterActi
 			m.cursor++
 		}
 
+	case key.Matches(km, filterKeys.Space):
+		c := colorEntries[m.cursor].color
+		if c == "" {
+			m.pendingColors = nil
+		} else {
+			m.pendingColors = toggleColor(m.pendingColors, c, 2)
+		}
+
 	case key.Matches(km, filterKeys.Select):
 		f := m.current
-		if colorEntries[m.cursor].color == "" {
-			f.Colors = nil
-		} else {
-			f.Colors = []models.Color{colorEntries[m.cursor].color}
-		}
+		f.Colors = m.pendingColors
 		return m, FilterActionApplied, func() tea.Msg { return FilterAppliedMsg{Filter: f} }
 	}
 	return m, FilterActionNone, nil
+}
+
+func toggleColor(colors []models.Color, c models.Color, max int) []models.Color {
+	for i, existing := range colors {
+		if existing == c {
+			out := make([]models.Color, 0, len(colors)-1)
+			out = append(out, colors[:i]...)
+			return append(out, colors[i+1:]...)
+		}
+	}
+	if len(colors) < max {
+		return append(colors, c)
+	}
+	return colors
 }
 
 func (m FilterPalette) updateCategorySelect(msg tea.Msg) (FilterPalette, FilterAction, tea.Cmd) {
@@ -281,9 +296,9 @@ func (m FilterPalette) View() string {
 	case phaseTypeSelect:
 		m.viewTypeSelect(&sb)
 	case phaseColorSelect:
-		m.viewList(&sb, "Select Color", colorListRows())
+		m.viewList(&sb, "Select Colors (up to 2)", colorListRows(m.pendingColors), "space toggle · enter apply · esc back")
 	case phaseCategorySelect:
-		m.viewList(&sb, "Select Category", categoryListRows())
+		m.viewList(&sb, "Select Category", categoryListRows(), "↑↓/jk · enter select · esc back")
 	}
 
 	return styles.StylePaletteOverlay.Width(fOverlayW).Render(sb.String())
@@ -335,7 +350,7 @@ func (m FilterPalette) viewTypeSelect(sb *strings.Builder) {
 	))
 }
 
-func (m FilterPalette) viewList(sb *strings.Builder, title string, rows []listRow) {
+func (m FilterPalette) viewList(sb *strings.Builder, title string, rows []listRow, hint string) {
 	divider := styles.StyleDetailDivider.Render(strings.Repeat("─", fLabelW+fHintW))
 
 	sb.WriteString(styles.StyleDetailTitle.Render(title))
@@ -356,20 +371,31 @@ func (m FilterPalette) viewList(sb *strings.Builder, title string, rows []listRo
 	sb.WriteString(divider)
 	sb.WriteString("\n")
 	sb.WriteString(styles.StylePaletteItem.Render(
-		styles.StylePaletteHint.Render("↑↓/jk · enter select · esc back"),
+		styles.StylePaletteHint.Render(hint),
 	))
 }
 
 type listRow struct{ label string }
 
-func colorListRows() []listRow {
+func colorListRows(pending []models.Color) []listRow {
+	selected := make(map[models.Color]bool, len(pending))
+	for _, c := range pending {
+		selected[c] = true
+	}
 	rows := make([]listRow, len(colorEntries))
 	for i, e := range colorEntries {
-		var swatch string
-		if e.color != "" {
+		var prefix, swatch string
+		if e.color == "" {
+			prefix = "  "
+		} else {
 			swatch = styles.CardColorSwatch(string(e.color)) + " "
+			if selected[e.color] {
+				prefix = "✓ "
+			} else {
+				prefix = "  "
+			}
 		}
-		rows[i] = listRow{label: swatch + e.label}
+		rows[i] = listRow{label: prefix + swatch + e.label}
 	}
 	return rows
 }

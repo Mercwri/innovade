@@ -127,6 +127,16 @@ func (s *Store) DeleteDeck(id string) error {
 	return nil
 }
 
+
+// RenameDeck updates the name of a deck by ID.
+func (s *Store) RenameDeck(id, name string) error {
+	_, err := s.db.Exec(
+		"UPDATE decks SET name = ?, updated_at = ? WHERE id = ?",
+		name, time.Now().UTC().Format(time.RFC3339), id,
+	)
+	return err
+}
+
 // --- helpers ---
 
 func scanDeck(row scanner) (*models.Deck, error) {

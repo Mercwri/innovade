@@ -98,7 +98,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeDeck = msg.Deck
 		m.library.SetActiveDeck(msg.Deck)
 		m.activeView = ViewLibrary
-		return m, nil
+		if colors := deckColors(msg.Deck, m.deckbuilder.CardStats()); len(colors) > 0 {
+			m.library.SetFilter(models.CardFilter{Colors: colors})
+		}
+		return m, m.library.ReloadCards()
 
 	case deckbuilder.DeckCreatedMsg:
 		m.activeDeck = msg.Deck
@@ -282,6 +285,24 @@ func viewLabel(v View) string {
 		return "Analysis"
 	}
 	return ""
+}
+
+// deckColors returns the unique colors present across all cards in the deck,
+// derived from cached card stats. Returns at most the distinct colors found.
+func deckColors(deck *models.Deck, stats map[string]store.CardStat) []models.Color {
+	seen := make(map[models.Color]bool)
+	var result []models.Color
+	for _, e := range deck.Entries {
+		if s, ok := stats[e.CardCode]; ok {
+			for _, c := range s.Colors {
+				if !seen[c] {
+					seen[c] = true
+					result = append(result, c)
+				}
+			}
+		}
+	}
+	return result
 }
 
 // ClosePaletteMsg is sent by child models to close the palette.

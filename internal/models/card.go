@@ -198,17 +198,74 @@ func (c *Card) ParseLinkRequirement() []string {
 	return terms
 }
 
-// IsPilotEligible returns true for Pilot cards and Command cards that carry the Pilot trait.
+// pilotEffectMarker is the byte-exact suffix that follows the word "Pilot" in the
+// 【Pilot】[Name] effect marker on Command-Pilot cards. The source JSON had its
+// Japanese lenticular brackets double-encoded (UTF-8 bytes read as Windows-1252
+// then re-encoded), producing this specific three-codepoint sequence before "[".
+const PilotEffectMarker = "Pilot】["
+
+// ExtractPilotName parses the pilot name from the 【Pilot】[Name] marker embedded
+// in a Command-Pilot card's effect text. Returns "" if no marker is found.
+func (c *Card) ExtractPilotName() string {
+	idx := strings.Index(c.Effect, PilotEffectMarker)
+	if idx == -1 {
+		return ""
+	}
+	rest := c.Effect[idx+len(PilotEffectMarker):]
+	end := strings.Index(rest, "]")
+	if end == -1 {
+		return ""
+	}
+	return strings.TrimSpace(rest[:end])
+}
+
+// ParseLinkTerms splits the link requirement into pilot names (from "[Name]") and
+// trait names (from "(Trait)"), returning them separately for precise SQL matching.
+func (c *Card) ParseLinkTerms() (names []string, traits []string) {
+	if c.LinkRequirement == "" {
+		return nil, nil
+	}
+	s := c.LinkRequirement
+	for {
+		start := strings.Index(s, "[")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(s[start:], "]")
+		if end == -1 {
+			break
+		}
+		if term := strings.TrimSpace(s[start+1 : start+end]); term != "" {
+			names = append(names, term)
+		}
+		s = s[start+end+1:]
+	}
+	s = c.LinkRequirement
+	for {
+		start := strings.Index(s, "(")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(s[start:], ")")
+		if end == -1 {
+			break
+		}
+		if term := strings.TrimSpace(s[start+1 : start+end]); term != "" {
+			traits = append(traits, term)
+		}
+		s = s[start+end+1:]
+	}
+	return names, traits
+}
+
+// IsPilotEligible returns true for Pilot cards and Command cards that embed a
+// 【Pilot】[Name] marker in their effect text.
 func (c *Card) IsPilotEligible() bool {
 	if c.Category == CategoryPilot {
 		return true
 	}
 	if c.Category == CategoryCommand {
-		for _, t := range c.Types {
-			if strings.EqualFold(t, "pilot") {
-				return true
-			}
-		}
+		return c.ExtractPilotName() != ""
 	}
 	return false
 }

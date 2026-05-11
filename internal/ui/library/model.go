@@ -2,6 +2,7 @@ package library
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -33,6 +34,10 @@ type Model struct {
 	filtersActive     bool
 	filterPaletteOpen bool
 	filterPalette     FilterPalette
+
+	// Text-search input state
+	textInputOpen bool
+	textInput     string
 
 	// Deck editing state
 	activeDeck *models.Deck
@@ -89,9 +94,25 @@ func (m *Model) SetSize(w, h int) {
 	m.listH = h * 2 / 3
 }
 
-// SetActiveDeck updates the deck being edited in the library view.
+// SetActiveDeck updates the deck being edited in the library view and
+// re-sorts the current card list so deck cards appear first.
 func (m *Model) SetActiveDeck(d *models.Deck) {
 	m.activeDeck = d
+	if d != nil && m.loaded && len(m.cards) > 0 {
+		sortDeckCardsFirst(m.cards, d)
+		m.cursor = 0
+		m.offset = 0
+		m.updateSelected()
+	}
+}
+
+// SetFilter replaces the active filter without triggering a reload.
+// The caller is responsible for calling ReloadCards() if needed.
+func (m *Model) SetFilter(f models.CardFilter) {
+	m.filter = f
+	m.filtersActive = true
+	m.cursor = 0
+	m.offset = 0
 }
 
 // OpenFilterPalette is called by the root app when the palette routes here.
@@ -113,6 +134,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.cards = msg.Cards
 		m.total = len(msg.Cards)
+		if m.activeDeck != nil {
+			sortDeckCardsFirst(m.cards, m.activeDeck)
+		}
 		m.cursor = 0
 		m.offset = 0
 		m.updateSelected()
@@ -127,6 +151,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, m.loadCards()
 
 	case tea.KeyMsg:
+		if m.textInputOpen {
+			return m.updateTextInput(msg)
+		}
+
 		if m.filterPaletteOpen {
 			var action FilterAction
 			var cmd tea.Cmd
@@ -178,39 +206,96 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return m, func() tea.Msg { return FilterAppliedMsg{Filter: f} }
 				}
 			}
+		case key.Matches(msg, keys.Library.ClearFilters):
+			m.filter = models.CardFilter{}
+			m.filtersActive = true
+			m.cursor = 0
+			m.offset = 0
+			return m, m.loadCards()
+		case key.Matches(msg, keys.Library.OpenFilter):
+			m.OpenFilterPalette()
+		case key.Matches(msg, keys.Library.TextFilter):
+			m.textInputOpen = true
+			m.textInput = m.filter.Name
 		}
 	}
 
 	return m, tea.Batch(cmds...)
 }
 
+func (m Model) updateTextInput(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		f := m.filter
+		f.Name = strings.TrimSpace(m.textInput)
+		m.filter = f
+		m.filtersActive = true
+		m.textInputOpen = false
+		m.cursor = 0
+		m.offset = 0
+		return m, m.loadCards()
+	case tea.KeyEscape:
+		m.textInputOpen = false
+		m.textInput = m.filter.Name
+	case tea.KeyBackspace, tea.KeyDelete:
+		runes := []rune(m.textInput)
+		if len(runes) > 0 {
+			m.textInput = string(runes[:len(runes)-1])
+		}
+	case tea.KeyRunes:
+		m.textInput += string(msg.Runes)
+	}
+	return m, nil
+}
+
+func sortDeckCardsFirst(cards []models.Card, deck *models.Deck) {
+	inDeck := make(map[string]bool, len(deck.Entries))
+	for _, e := range deck.Entries {
+		if e.Quantity > 0 {
+			inDeck[e.CardCode] = true
+		}
+	}
+	sort.SliceStable(cards, func(i, j int) bool {
+		return inDeck[cards[i].CardCode] && !inDeck[cards[j].CardCode]
+	})
+}
+
 // buildLinkFilter constructs a CardFilter that finds cards linked to the given card.
 // For a Unit: finds pilot-eligible cards matching its link requirement terms.
-// For a Pilot/pilot-Command: finds Units whose link_requirement matches the card's name/traits.
+// For a Pilot/pilot-Command: finds Units whose link_requirement references this card.
 func buildLinkFilter(card *models.Card) (models.CardFilter, bool) {
 	switch {
 	case card.Category == models.CategoryUnit || card.Category == models.CategoryUnitToken:
-		terms := card.ParseLinkRequirement()
-		if len(terms) == 0 {
+		names, traits := card.ParseLinkTerms()
+		if len(names) == 0 && len(traits) == 0 {
 			return models.CardFilter{}, false
 		}
 		return models.CardFilter{
-			FindPilots:     true,
-			PilotLinkTerms: terms,
-			Description:    "links for " + card.CardCode,
+			FindPilots:      true,
+			PilotLinkNames:  names,
+			PilotLinkTraits: traits,
+			Description:     "links for " + card.CardCode,
 		}, true
 
 	case card.IsPilotEligible():
-		terms := []string{card.Name}
+		var unitTraits []string
 		for _, t := range card.Types {
 			if !strings.EqualFold(t, "pilot") {
-				terms = append(terms, t)
+				unitTraits = append(unitTraits, t)
+			}
+		}
+		// Command-Pilot cards link by pilot name (from effect), not by card name.
+		linkName := card.Name
+		if card.Category == models.CategoryCommand {
+			if pn := card.ExtractPilotName(); pn != "" {
+				linkName = pn
 			}
 		}
 		return models.CardFilter{
-			Categories:    []models.Category{models.CategoryUnit},
-			UnitLinkTerms: terms,
-			Description:   "units for " + card.Name,
+			Categories:     []models.Category{models.CategoryUnit},
+			UnitLinkNames:  []string{linkName},
+			UnitLinkTraits: unitTraits,
+			Description:    "units for " + linkName,
 		}, true
 	}
 	return models.CardFilter{}, false
@@ -273,6 +358,13 @@ func (m *Model) loadCards() tea.Cmd {
 	}
 }
 
+func hasAnyFilter(f models.CardFilter) bool {
+	return f.Name != "" || len(f.Categories) > 0 || len(f.Colors) > 0 ||
+		f.FindPilots || len(f.PilotLinkNames) > 0 || len(f.PilotLinkTraits) > 0 ||
+		len(f.UnitLinkNames) > 0 || len(f.UnitLinkTraits) > 0 ||
+		f.SetCode != "" || f.Type != ""
+}
+
 func (m Model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("error loading cards: %v", m.err)
@@ -281,12 +373,18 @@ func (m Model) View() string {
 		return "Loading cards..."
 	}
 	if len(m.cards) == 0 {
+		if m.filtersActive && hasAnyFilter(m.filter) {
+			return "No cards match the current filter.\n\nPress [c] to clear filters or [f] to adjust them."
+		}
 		return "No cards imported yet.\n\nPress [?] to open the palette and import cards."
 	}
 
 	list := renderList(m)
 	detail := renderDetail(m.selected, m.width)
 
+	if m.textInputOpen {
+		return renderWithTextInput(m.textInput, m.width, m.height)
+	}
 	if m.filterPaletteOpen {
 		return renderWithFilterPalette(m.filterPalette.View(), m.width, m.height)
 	}

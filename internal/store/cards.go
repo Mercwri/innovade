@@ -57,29 +57,38 @@ func (s *Store) QueryCards(q models.CardQuery) ([]models.Card, error) {
 		args = append(args, "%"+f.Name+"%")
 	}
 	if f.FindPilots {
-		// Include Pilot-category cards AND Command cards with the Pilot trait.
-		conditions = append(conditions, `(c.category = 'Pilot' OR (c.category = 'Command' AND EXISTS (SELECT 1 FROM card_types ct_p WHERE ct_p.card_code = c.card_code AND LOWER(ct_p.type) = 'pilot')))`)
+		// Pilot category OR Command cards with the garbled 【Pilot】[Name] marker in their effect.
+		conditions = append(conditions, "(c.category = 'Pilot' OR (c.category = 'Command' AND c.effect LIKE ?))")
+		args = append(args, "%"+models.PilotEffectMarker+"%")
 	} else if len(f.Categories) > 0 {
 		conditions = append(conditions, "c.category IN ("+placeholders(len(f.Categories))+")")
 		for _, cat := range f.Categories {
 			args = append(args, string(cat))
 		}
 	}
-	if len(f.PilotLinkTerms) > 0 {
-		// Match pilots whose name OR any trait equals any of the link terms.
+	if len(f.PilotLinkNames) > 0 || len(f.PilotLinkTraits) > 0 {
+		// Match pilots by name (Pilot cards) OR by pilot-name in effect (Command-Pilot cards).
 		var termConds []string
-		for _, term := range f.PilotLinkTerms {
-			termConds = append(termConds, "(c.name LIKE ? OR EXISTS (SELECT 1 FROM card_types ct_lt WHERE ct_lt.card_code = c.card_code AND ct_lt.type = ?))")
-			args = append(args, "%"+term+"%", term)
+		for _, name := range f.PilotLinkNames {
+			termConds = append(termConds, "(c.name LIKE ? OR c.effect LIKE ?)")
+			args = append(args, "%"+name+"%", "%["+name+"]%")
+		}
+		for _, trait := range f.PilotLinkTraits {
+			termConds = append(termConds, "EXISTS (SELECT 1 FROM card_types ct_lt WHERE ct_lt.card_code = c.card_code AND LOWER(ct_lt.type) = LOWER(?))")
+			args = append(args, trait)
 		}
 		conditions = append(conditions, "("+strings.Join(termConds, " OR ")+")")
 	}
-	if len(f.UnitLinkTerms) > 0 {
-		// Match units whose link_requirement contains any of the pilot's name/traits.
+	if len(f.UnitLinkNames) > 0 || len(f.UnitLinkTraits) > 0 {
+		// Use delimiter-bounded patterns to avoid false matches (e.g. Newtype vs Cyber-Newtype).
 		var termConds []string
-		for _, term := range f.UnitLinkTerms {
+		for _, name := range f.UnitLinkNames {
 			termConds = append(termConds, "c.link_requirement LIKE ?")
-			args = append(args, "%"+term+"%")
+			args = append(args, "%["+name+"]%")
+		}
+		for _, trait := range f.UnitLinkTraits {
+			termConds = append(termConds, "c.link_requirement LIKE ?")
+			args = append(args, "%("+trait+")%")
 		}
 		conditions = append(conditions, "("+strings.Join(termConds, " OR ")+")")
 	}
@@ -218,6 +227,69 @@ func (s *Store) QueryCards(q models.CardQuery) ([]models.Card, error) {
 	}
 
 	return cards, nil
+}
+
+// CardStat holds the fields needed for deck analysis (curve grid, etc.).
+type CardStat struct {
+	Name     string
+	Category models.Category
+	Level    int
+	Colors   []models.Color
+}
+
+// GetCardStatsByCodes returns a CardStat for each code provided.
+func (s *Store) GetCardStatsByCodes(codes []string) (map[string]CardStat, error) {
+	if len(codes) == 0 {
+		return map[string]CardStat{}, nil
+	}
+	ph := placeholders(len(codes))
+	args := make([]any, len(codes))
+	for i, c := range codes {
+		args[i] = c
+	}
+
+	rows, err := s.db.Query(
+		"SELECT card_code, name, category, level FROM cards WHERE card_code IN ("+ph+")",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get card stats: %w", err)
+	}
+	result := make(map[string]CardStat, len(codes))
+	for rows.Next() {
+		var cs CardStat
+		var code string
+		if err := rows.Scan(&code, &cs.Name, (*string)(&cs.Category), &cs.Level); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		result[code] = cs
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	colorRows, err := s.db.Query(
+		"SELECT card_code, color FROM card_colors WHERE card_code IN ("+ph+")",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get card stat colors: %w", err)
+	}
+	defer colorRows.Close()
+	for colorRows.Next() {
+		var code, color string
+		if err := colorRows.Scan(&code, &color); err != nil {
+			return nil, err
+		}
+		if cs, ok := result[code]; ok {
+			cs.Colors = append(cs.Colors, models.Color(color))
+			result[code] = cs
+		}
+	}
+	return result, colorRows.Err()
 }
 
 // GetCardNamesByCodes returns a map of card code → name for the given codes.

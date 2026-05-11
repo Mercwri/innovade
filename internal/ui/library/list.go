@@ -54,15 +54,22 @@ func renderList(m Model) string {
 		sb.WriteString("\n")
 	}
 
-	// Scroll hint (always shown when cards exceed the visible window)
+	// Help/scroll hint — always rendered (space is reserved by visibleRows).
+	var hint string
 	if len(m.cards) > vr {
 		pct := 0
 		if len(m.cards) > 0 {
 			pct = (m.cursor + 1) * 100 / len(m.cards)
 		}
-		hint := fmt.Sprintf("  %d%%  ↑↓/jk to navigate · g/G top/bottom", pct)
-		sb.WriteString(styles.StylePaletteHint.Render(hint))
+		hint = fmt.Sprintf("%d%% ↑↓/jk · g/G top/btm", pct)
+	} else {
+		hint = "↑↓/jk navigate · g/G top/bottom"
 	}
+	hint += " · t search · f filter · c clear · l links"
+	if m.activeDeck != nil {
+		hint += " · enter add · del remove"
+	}
+	sb.WriteString(styles.StylePaletteHint.Render(hint))
 
 	return sb.String()
 }
@@ -144,6 +151,19 @@ func renderLayout(list, detail string, w, h int) string {
 		Render(detail)
 
 	return lipgloss.JoinVertical(lipgloss.Left, listBox, detailBox)
+}
+
+func renderWithTextInput(input string, w, h int) string {
+	cursor := input + "█"
+	body := "Search by name: " + cursor + "\n\n" +
+		styles.StylePaletteHint.Render("↵ apply  ·  esc cancel")
+	box := styles.StylePaletteOverlay.Width(44).Render(body)
+	y := max((h-lipgloss.Height(box))/4, 0)
+	return lipgloss.Place(w, h,
+		lipgloss.Center, lipgloss.Top,
+		lipgloss.NewStyle().MarginTop(y).Render(box),
+		lipgloss.WithWhitespaceChars(" "),
+	)
 }
 
 func renderWithFilterPalette(palette string, w, h int) string {
