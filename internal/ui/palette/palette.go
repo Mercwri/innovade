@@ -4,47 +4,28 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Mercwri/innovade/internal/ui/styles"
 )
-
-var StylePaletteInput = lipgloss.NewStyle().
-	Padding(0, 1)
-
-var StyleDetailDivider = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("240"))
-
-var StylePaletteHint = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("241"))
-
-var StylePaletteItem = lipgloss.NewStyle().
-	Padding(0, 1)
-
-var StylePaletteItemSelected = lipgloss.NewStyle().
-	Padding(0, 1).
-	Background(lipgloss.Color("7")).
-	Foreground(lipgloss.Color("0"))
-
-var StylePaletteOverlay = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("62")).
-	Padding(1)
 
 // PaletteAction represents a resolved command from the palette.
 type PaletteAction int
 
 const (
 	ActionNone PaletteAction = iota
+	ActionClose
 	ActionQuit
 	ActionOpenLibrary
 	ActionOpenDeckBuilder
 	ActionOpenDeckLibrary
 	ActionOpenAnalysis
 	ActionFilterLibrary
+	ActionImportCards
+	// Kept for compatibility but no longer dispatched.
 	ActionSearchLibrary
 	ActionClearFilters
-	ActionImportCards
 )
 
 type View int
@@ -54,35 +35,23 @@ const (
 	ViewLibrary
 )
 
-type paletteEntry struct {
-	label   string
-	hint    string
-	action  PaletteAction
-	context View // -1 means global
-}
-
+// Palette exposes key bindings so the parent model can forward events.
 var Palette = struct {
 	Close  key.Binding
 	Select key.Binding
 	Up     key.Binding
 	Down   key.Binding
 }{
-	Close: key.NewBinding(
-		key.WithKeys("esc"),
-		key.WithHelp("esc", "close palette"),
-	),
-	Select: key.NewBinding(
-		key.WithKeys("enter"),
-		key.WithHelp("enter", "select command"),
-	),
-	Up: key.NewBinding(
-		key.WithKeys("up", "k"),
-		key.WithHelp("up/k", "move up"),
-	),
-	Down: key.NewBinding(
-		key.WithKeys("down", "j"),
-		key.WithHelp("down/j", "move down"),
-	),
+	Close:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
+	Select: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+	Up:     key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+	Down:   key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+}
+
+type paletteEntry struct {
+	label  string
+	hint   string
+	action PaletteAction
 }
 
 var globalEntries = []paletteEntry{
@@ -95,38 +64,33 @@ var globalEntries = []paletteEntry{
 }
 
 var libraryEntries = []paletteEntry{
-	{label: "Filter by Color", hint: "narrow by card color", action: ActionFilterLibrary},
-	{label: "Filter by Category", hint: "unit, command, pilot...", action: ActionFilterLibrary},
-	{label: "Filter by Set", hint: "narrow by set code", action: ActionFilterLibrary},
-	{label: "Search by Name", hint: "find cards by name", action: ActionSearchLibrary},
-	{label: "Clear Filters", hint: "reset all active filters", action: ActionClearFilters},
+	{label: "Filter Cards", hint: "search & filter", action: ActionFilterLibrary},
 }
+
+// column widths; label+hint must stay within overlayW-2 (item padding).
+const (
+	overlayW = 48
+	labelW   = 20
+	hintW    = 26
+)
 
 // PaletteModel is the command palette overlay.
 type PaletteModel struct {
-	input    textinput.Model
-	entries  []paletteEntry
-	filtered []paletteEntry
-	cursor   int
-	context  View
+	entries    []paletteEntry
+	numGlobal  int
+	cursor     int
 }
 
 func NewPaletteModel(ctx View) PaletteModel {
-	ti := textinput.New()
-	ti.Placeholder = "Type a command..."
-	ti.Focus()
-	ti.CharLimit = 64
-	ti.Width = 46
+	ctx_entries := contextEntries(ctx)
+	entries := make([]paletteEntry, 0, len(globalEntries)+len(ctx_entries))
+	entries = append(entries, globalEntries...)
+	entries = append(entries, ctx_entries...)
 
-	entries := append(globalEntries, contextEntries(ctx)...)
-
-	m := PaletteModel{
-		input:   ti,
-		entries: entries,
-		context: ctx,
+	return PaletteModel{
+		entries:   entries,
+		numGlobal: len(globalEntries),
 	}
-	m.filtered = entries
-	return m
 }
 
 func contextEntries(v View) []paletteEntry {
@@ -137,108 +101,65 @@ func contextEntries(v View) []paletteEntry {
 	return nil
 }
 
-// Update returns the updated model, a resolved action (if any), and a Cmd.
+// Update returns the updated model, a resolved action, and a Cmd.
 func (m PaletteModel) Update(msg tea.Msg) (PaletteModel, PaletteAction, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, Palette.Close):
-			return m, ActionNone, nil
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, ActionNone, nil
+	}
+	switch {
+	case key.Matches(km, Palette.Close):
+		return m, ActionClose, nil
 
-		case key.Matches(msg, Palette.Select):
-			if len(m.filtered) > 0 {
-				return m, m.filtered[m.cursor].action, nil
-			}
-			return m, ActionNone, nil
+	case key.Matches(km, Palette.Select):
+		if len(m.entries) > 0 {
+			return m, m.entries[m.cursor].action, nil
+		}
 
-		case key.Matches(msg, Palette.Up):
-			if m.cursor > 0 {
-				m.cursor--
-			}
-			return m, ActionNone, nil
+	case key.Matches(km, Palette.Up):
+		if m.cursor > 0 {
+			m.cursor--
+		}
 
-		case key.Matches(msg, Palette.Down):
-			if m.cursor < len(m.filtered)-1 {
-				m.cursor++
-			}
-			return m, ActionNone, nil
+	case key.Matches(km, Palette.Down):
+		if m.cursor < len(m.entries)-1 {
+			m.cursor++
 		}
 	}
-
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	m.filtered = m.filter(m.input.Value())
-	if m.cursor >= len(m.filtered) {
-		m.cursor = max(0, len(m.filtered)-1)
-	}
-	return m, ActionNone, cmd
-}
-
-func (m PaletteModel) filter(query string) []paletteEntry {
-	if query == "" {
-		return m.entries
-	}
-	q := strings.ToLower(query)
-	var out []paletteEntry
-	for _, e := range m.entries {
-		if strings.Contains(strings.ToLower(e.label), q) ||
-			strings.Contains(strings.ToLower(e.hint), q) {
-			out = append(out, e)
-		}
-	}
-	return out
+	return m, ActionNone, nil
 }
 
 func (m PaletteModel) View() string {
 	var sb strings.Builder
 
-	sb.WriteString(StylePaletteInput.Render(m.input.View()))
+	divider := styles.StyleDetailDivider.Render(strings.Repeat("─", labelW+hintW))
+
+	sb.WriteString(divider)
 	sb.WriteString("\n")
-	sb.WriteString(StyleDetailDivider.Render(strings.Repeat("─", 48)))
-	sb.WriteString("\n")
 
-	maxVisible := 8
-	start := 0
-	if m.cursor >= maxVisible {
-		start = m.cursor - maxVisible + 1
-	}
-	end := start + maxVisible
-	if end > len(m.filtered) {
-		end = len(m.filtered)
-	}
+	for i, e := range m.entries {
+		if i == m.numGlobal && i > 0 {
+			sb.WriteString(divider)
+			sb.WriteString("\n")
+		}
 
-	if len(m.filtered) == 0 {
-		sb.WriteString(StylePaletteHint.Render("  no matching commands"))
-		sb.WriteString("\n")
-	}
-
-	for i := start; i < end; i++ {
-		e := m.filtered[i]
-		label := lipgloss.NewStyle().Width(22).Render(e.label)
-		hint := StylePaletteHint.Width(24).Render(e.hint)
+		label := lipgloss.NewStyle().Width(labelW).Render(e.label)
+		hint := styles.StylePaletteHint.Width(hintW).Render(e.hint)
 		row := label + hint
 
 		if i == m.cursor {
-			sb.WriteString(StylePaletteItemSelected.Render(row))
+			sb.WriteString(styles.StylePaletteItemSelected.Render(row))
 		} else {
-			sb.WriteString(StylePaletteItem.Render(row))
+			sb.WriteString(styles.StylePaletteItem.Render(row))
 		}
 		sb.WriteString("\n")
 	}
 
-	if len(m.filtered) > maxVisible {
-		sb.WriteString(StylePaletteHint.Render("  … more results"))
-		sb.WriteString("\n")
-	}
+	sb.WriteString(divider)
+	sb.WriteString("\n")
+	sb.WriteString(styles.StylePaletteItem.Render(
+		styles.StylePaletteHint.Render("↑↓/jk · enter select · esc close"),
+	))
 
-	return StylePaletteOverlay.
-		Width(50).
-		Render(sb.String())
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	return styles.StylePaletteOverlay.Width(overlayW).Render(sb.String())
 }

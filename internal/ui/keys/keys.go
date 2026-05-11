@@ -21,12 +21,15 @@ var Global = GlobalKeys{
 
 // LibraryKeys are active when the card library is focused.
 type LibraryKeys struct {
-	Up       key.Binding
-	Down     key.Binding
-	Top      key.Binding
-	Bottom   key.Binding
-	PageUp   key.Binding
-	PageDown key.Binding
+	Up             key.Binding
+	Down           key.Binding
+	Top            key.Binding
+	Bottom         key.Binding
+	PageUp         key.Binding
+	PageDown       key.Binding
+	AddToDeck      key.Binding
+	RemoveFromDeck key.Binding
+	FindLinks      key.Binding
 }
 
 var Library = LibraryKeys{
@@ -53,6 +56,18 @@ var Library = LibraryKeys{
 	PageDown: key.NewBinding(
 		key.WithKeys("pgdown", "ctrl+d"),
 		key.WithHelp("PgDn", "page down"),
+	),
+	AddToDeck: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "add to deck"),
+	),
+	RemoveFromDeck: key.NewBinding(
+		key.WithKeys("delete", "backspace"),
+		key.WithHelp("del", "remove from deck"),
+	),
+	FindLinks: key.NewBinding(
+		key.WithKeys("l"),
+		key.WithHelp("l", "find links"),
 	),
 }
 

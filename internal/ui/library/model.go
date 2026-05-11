@@ -2,6 +2,7 @@ package library
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -10,28 +11,6 @@ import (
 	"github.com/Mercwri/innovade/internal/store"
 	"github.com/Mercwri/innovade/internal/ui/keys"
 )
-
-// FilterPaletteModel is the interface used for the library's filter palette.
-type FilterPaletteModel interface {
-	Update(msg tea.Msg) (FilterPaletteModel, tea.Cmd)
-	View() string
-}
-
-type filterPaletteModel struct {
-	filter models.CardFilter
-}
-
-func NewFilterPaletteModel(filter models.CardFilter) FilterPaletteModel {
-	return &filterPaletteModel{filter: filter}
-}
-
-func (m *filterPaletteModel) Update(msg tea.Msg) (FilterPaletteModel, tea.Cmd) {
-	return m, nil
-}
-
-func (m *filterPaletteModel) View() string {
-	return "Filter palette"
-}
 
 // Model is the card library Bubble Tea model.
 type Model struct {
@@ -50,9 +29,13 @@ type Model struct {
 	width  int
 	height int
 
-	// Sub-palette for library-specific actions
+	// Filtering state
+	filtersActive     bool
 	filterPaletteOpen bool
-	filterPalette     FilterPaletteModel
+	filterPalette     FilterPalette
+
+	// Deck editing state
+	activeDeck *models.Deck
 
 	loaded bool
 	err    error
@@ -69,10 +52,17 @@ type FilterAppliedMsg struct {
 	Filter models.CardFilter
 }
 
+// AddToDeckMsg is sent when the user wants to add the selected card to the active deck.
+type AddToDeckMsg struct{ CardCode string }
+
+// RemoveFromDeckMsg is sent when the user wants to remove the selected card from the active deck.
+type RemoveFromDeckMsg struct{ CardCode string }
+
 func New(s *store.Store) (Model, error) {
 	m := Model{
-		store:  s,
-		filter: models.CardFilter{ExcludeTokens: false},
+		store:         s,
+		filter:        models.CardFilter{ExcludeTokens: false},
+		filtersActive: true,
 	}
 	return m, nil
 }
@@ -99,10 +89,15 @@ func (m *Model) SetSize(w, h int) {
 	m.listH = h * 2 / 3
 }
 
+// SetActiveDeck updates the deck being edited in the library view.
+func (m *Model) SetActiveDeck(d *models.Deck) {
+	m.activeDeck = d
+}
+
 // OpenFilterPalette is called by the root app when the palette routes here.
 func (m *Model) OpenFilterPalette() {
 	m.filterPaletteOpen = true
-	m.filterPalette = NewFilterPaletteModel(m.filter)
+	m.filterPalette = NewFilterPalette(m.filter, m.filtersActive)
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -125,6 +120,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case FilterAppliedMsg:
 		m.filter = msg.Filter
+		m.filtersActive = true
 		m.filterPaletteOpen = false
 		m.cursor = 0
 		m.offset = 0
@@ -132,10 +128,31 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if m.filterPaletteOpen {
+			var action FilterAction
 			var cmd tea.Cmd
-			m.filterPalette, cmd = m.filterPalette.Update(msg)
+			m.filterPalette, action, cmd = m.filterPalette.Update(msg)
 			cmds = append(cmds, cmd)
+			switch action {
+			case FilterActionClose, FilterActionApplied:
+				m.filterPaletteOpen = false
+			case FilterActionToggle:
+				m.filtersActive = !m.filtersActive
+				m.filterPaletteOpen = false
+				cmds = append(cmds, m.loadCards())
+			}
 			return m, tea.Batch(cmds...)
+		}
+
+		// Deck add/remove — only when a deck is active
+		if m.activeDeck != nil && m.selected != nil {
+			switch {
+			case key.Matches(msg, keys.Library.AddToDeck):
+				code := m.selected.CardCode
+				return m, func() tea.Msg { return AddToDeckMsg{CardCode: code} }
+			case key.Matches(msg, keys.Library.RemoveFromDeck):
+				code := m.selected.CardCode
+				return m, func() tea.Msg { return RemoveFromDeckMsg{CardCode: code} }
+			}
 		}
 
 		switch {
@@ -152,13 +169,51 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.scrollToSelected()
 			m.updateSelected()
 		case key.Matches(msg, keys.Library.PageUp):
-			m.moveCursor(-m.listH)
+			m.moveCursor(-m.visibleRows())
 		case key.Matches(msg, keys.Library.PageDown):
-			m.moveCursor(m.listH)
+			m.moveCursor(m.visibleRows())
+		case key.Matches(msg, keys.Library.FindLinks):
+			if m.selected != nil {
+				if f, ok := buildLinkFilter(m.selected); ok {
+					return m, func() tea.Msg { return FilterAppliedMsg{Filter: f} }
+				}
+			}
 		}
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// buildLinkFilter constructs a CardFilter that finds cards linked to the given card.
+// For a Unit: finds pilot-eligible cards matching its link requirement terms.
+// For a Pilot/pilot-Command: finds Units whose link_requirement matches the card's name/traits.
+func buildLinkFilter(card *models.Card) (models.CardFilter, bool) {
+	switch {
+	case card.Category == models.CategoryUnit || card.Category == models.CategoryUnitToken:
+		terms := card.ParseLinkRequirement()
+		if len(terms) == 0 {
+			return models.CardFilter{}, false
+		}
+		return models.CardFilter{
+			FindPilots:     true,
+			PilotLinkTerms: terms,
+			Description:    "links for " + card.CardCode,
+		}, true
+
+	case card.IsPilotEligible():
+		terms := []string{card.Name}
+		for _, t := range card.Types {
+			if !strings.EqualFold(t, "pilot") {
+				terms = append(terms, t)
+			}
+		}
+		return models.CardFilter{
+			Categories:    []models.Category{models.CategoryUnit},
+			UnitLinkTerms: terms,
+			Description:   "units for " + card.Name,
+		}, true
+	}
+	return models.CardFilter{}, false
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -173,12 +228,23 @@ func (m *Model) moveCursor(delta int) {
 	m.updateSelected()
 }
 
+// visibleRows returns the number of card rows that fit in the list area,
+// reserving space for the 3 fixed header rows and 1 scroll-hint row.
+func (m Model) visibleRows() int {
+	v := m.listH - 4
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
 func (m *Model) scrollToSelected() {
+	vr := m.visibleRows()
 	if m.cursor < m.offset {
 		m.offset = m.cursor
 	}
-	if m.cursor >= m.offset+m.listH {
-		m.offset = m.cursor - m.listH + 1
+	if m.cursor >= m.offset+vr {
+		m.offset = m.cursor - vr + 1
 	}
 }
 
@@ -191,13 +257,18 @@ func (m *Model) updateSelected() {
 }
 
 func (m *Model) loadCards() tea.Cmd {
+	filter := models.CardFilter{}
+	if m.filtersActive {
+		filter = m.filter
+	}
+	store := m.store
 	return func() tea.Msg {
 		q := models.CardQuery{
-			Filter: m.filter,
+			Filter: filter,
 			SortBy: models.SortByCardCode,
 			Order:  models.SortAsc,
 		}
-		cards, err := m.store.QueryCards(q)
+		cards, err := store.QueryCards(q)
 		return CardsLoadedMsg{Cards: cards, Err: err}
 	}
 }
@@ -217,7 +288,7 @@ func (m Model) View() string {
 	detail := renderDetail(m.selected, m.width)
 
 	if m.filterPaletteOpen {
-		return renderWithFilterPalette(list, detail, m.filterPalette.View(), m.width, m.height)
+		return renderWithFilterPalette(m.filterPalette.View(), m.width, m.height)
 	}
 
 	return renderLayout(list, detail, m.width, m.height)

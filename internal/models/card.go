@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Category string
 
@@ -142,4 +145,70 @@ func (c *Card) AltArtCount() int {
 		return 0
 	}
 	return n
+}
+
+// ParseLinkRequirement extracts all link terms from a link requirement string.
+//
+// Two formats appear in the data, separated by " / " for OR logic:
+//
+//	[Amuro Ray]          → pilot name  "Amuro Ray"
+//	(White Base Team) Trait → trait    "White Base Team"
+//
+// Both may appear together: "(Trinity) Trait / [Ali al-Saachez]"
+func (c *Card) ParseLinkRequirement() []string {
+	if c.LinkRequirement == "" {
+		return nil
+	}
+	var terms []string
+
+	// Pass 1: extract pilot names from [...]
+	s := c.LinkRequirement
+	for {
+		start := strings.Index(s, "[")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(s[start:], "]")
+		if end == -1 {
+			break
+		}
+		if term := strings.TrimSpace(s[start+1 : start+end]); term != "" {
+			terms = append(terms, term)
+		}
+		s = s[start+end+1:]
+	}
+
+	// Pass 2: extract trait names from (...)
+	s = c.LinkRequirement
+	for {
+		start := strings.Index(s, "(")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(s[start:], ")")
+		if end == -1 {
+			break
+		}
+		if term := strings.TrimSpace(s[start+1 : start+end]); term != "" {
+			terms = append(terms, term)
+		}
+		s = s[start+end+1:]
+	}
+
+	return terms
+}
+
+// IsPilotEligible returns true for Pilot cards and Command cards that carry the Pilot trait.
+func (c *Card) IsPilotEligible() bool {
+	if c.Category == CategoryPilot {
+		return true
+	}
+	if c.Category == CategoryCommand {
+		for _, t := range c.Types {
+			if strings.EqualFold(t, "pilot") {
+				return true
+			}
+		}
+	}
+	return false
 }

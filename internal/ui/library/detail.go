@@ -133,27 +133,30 @@ func statPair(label string, val int) string {
 	)
 }
 
-// wordWrap breaks s into lines of at most maxWidth characters, breaking on spaces.
+// wordWrap breaks s into lines of at most maxWidth runes, breaking on spaces.
 func wordWrap(s string, maxWidth int) string {
-	if maxWidth <= 0 || len(s) <= maxWidth {
+	runes := []rune(s)
+	if maxWidth <= 0 || len(runes) <= maxWidth {
 		return s
 	}
 
 	var lines []string
-	for len(s) > maxWidth {
-		// Find last space within maxWidth
+	for len(runes) > maxWidth {
 		cut := maxWidth
-		for cut > 0 && s[cut] != ' ' {
+		for cut > 0 && runes[cut] != ' ' {
 			cut--
 		}
 		if cut == 0 {
 			cut = maxWidth // no space found, hard break
 		}
-		lines = append(lines, s[:cut])
-		s = strings.TrimLeft(s[cut:], " ")
+		lines = append(lines, string(runes[:cut]))
+		runes = runes[cut:]
+		for len(runes) > 0 && runes[0] == ' ' {
+			runes = runes[1:]
+		}
 	}
-	if s != "" {
-		lines = append(lines, s)
+	if len(runes) > 0 {
+		lines = append(lines, string(runes))
 	}
 	return strings.Join(lines, "\n")
 }

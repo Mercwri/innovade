@@ -35,6 +35,21 @@ type CardFilter struct {
 
 	// Exclude tokens from results (common default for deck building)
 	ExcludeTokens bool
+
+	// FindPilots: include Pilot-category cards AND Command cards that have the
+	// "Pilot" trait. Takes precedence over the Categories filter when set.
+	FindPilots bool
+
+	// PilotLinkTerms: terms parsed from a unit's link requirement (e.g. ["Amuro Ray"]).
+	// Returns pilot-eligible cards whose name or traits match ANY term.
+	PilotLinkTerms []string
+
+	// UnitLinkTerms: a pilot's name and traits. Returns Unit cards whose
+	// link_requirement contains ANY of these strings.
+	UnitLinkTerms []string
+
+	// Description overrides the auto-generated status-bar summary for this filter.
+	Description string
 }
 
 // SortField specifies which field to sort card results by.

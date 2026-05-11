@@ -56,11 +56,32 @@ func (s *Store) QueryCards(q models.CardQuery) ([]models.Card, error) {
 		conditions = append(conditions, "c.name LIKE ?")
 		args = append(args, "%"+f.Name+"%")
 	}
-	if len(f.Categories) > 0 {
+	if f.FindPilots {
+		// Include Pilot-category cards AND Command cards with the Pilot trait.
+		conditions = append(conditions, `(c.category = 'Pilot' OR (c.category = 'Command' AND EXISTS (SELECT 1 FROM card_types ct_p WHERE ct_p.card_code = c.card_code AND LOWER(ct_p.type) = 'pilot')))`)
+	} else if len(f.Categories) > 0 {
 		conditions = append(conditions, "c.category IN ("+placeholders(len(f.Categories))+")")
 		for _, cat := range f.Categories {
 			args = append(args, string(cat))
 		}
+	}
+	if len(f.PilotLinkTerms) > 0 {
+		// Match pilots whose name OR any trait equals any of the link terms.
+		var termConds []string
+		for _, term := range f.PilotLinkTerms {
+			termConds = append(termConds, "(c.name LIKE ? OR EXISTS (SELECT 1 FROM card_types ct_lt WHERE ct_lt.card_code = c.card_code AND ct_lt.type = ?))")
+			args = append(args, "%"+term+"%", term)
+		}
+		conditions = append(conditions, "("+strings.Join(termConds, " OR ")+")")
+	}
+	if len(f.UnitLinkTerms) > 0 {
+		// Match units whose link_requirement contains any of the pilot's name/traits.
+		var termConds []string
+		for _, term := range f.UnitLinkTerms {
+			termConds = append(termConds, "c.link_requirement LIKE ?")
+			args = append(args, "%"+term+"%")
+		}
+		conditions = append(conditions, "("+strings.Join(termConds, " OR ")+")")
 	}
 	if f.ExcludeTokens {
 		conditions = append(conditions, "c.category != 'Unit-token'")
@@ -197,6 +218,32 @@ func (s *Store) QueryCards(q models.CardQuery) ([]models.Card, error) {
 	}
 
 	return cards, nil
+}
+
+// GetCardNamesByCodes returns a map of card code → name for the given codes.
+func (s *Store) GetCardNamesByCodes(codes []string) (map[string]string, error) {
+	if len(codes) == 0 {
+		return map[string]string{}, nil
+	}
+	ph := placeholders(len(codes))
+	args := make([]any, len(codes))
+	for i, c := range codes {
+		args[i] = c
+	}
+	rows, err := s.db.Query("SELECT card_code, name FROM cards WHERE card_code IN ("+ph+")", args...)
+	if err != nil {
+		return nil, fmt.Errorf("get card names: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]string, len(codes))
+	for rows.Next() {
+		var code, name string
+		if err := rows.Scan(&code, &name); err != nil {
+			return nil, err
+		}
+		result[code] = name
+	}
+	return result, rows.Err()
 }
 
 // GetAllSets returns all known card sets ordered by code.
