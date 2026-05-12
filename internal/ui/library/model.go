@@ -106,6 +106,12 @@ func (m *Model) SetActiveDeck(d *models.Deck) {
 	}
 }
 
+// RefreshActiveDeck updates the deck pointer without re-sorting or resetting the cursor.
+// Use when a card's quantity changes but it hasn't entered or left the deck.
+func (m *Model) RefreshActiveDeck(d *models.Deck) {
+	m.activeDeck = d
+}
+
 // SetFilter replaces the active filter without triggering a reload.
 // The caller is responsible for calling ReloadCards() if needed.
 func (m *Model) SetFilter(f models.CardFilter) {

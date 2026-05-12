@@ -3,8 +3,12 @@ package styles
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	// Color palette
-	colorAccent   = lipgloss.Color("#7C3AED") // purple
+	// Base background colors — exported so renderers can fill full-width rows.
+	BgBase  = lipgloss.Color("#111827") // main content
+	BgPanel = lipgloss.Color("#1F2937") // header, overlays, left pane
+
+	// Foreground / accent palette
+	colorAccent   = lipgloss.Color("#7C3AED")
 	colorMuted    = lipgloss.Color("#6B7280")
 	colorSubtle   = lipgloss.Color("#374151")
 	colorSelected = lipgloss.Color("#1E1B4B")
@@ -18,13 +22,14 @@ var (
 	colorWhite  = lipgloss.Color("#E5E7EB")
 	colorPurple = lipgloss.Color("#A855F7")
 
-	// Layout
+	// ── Layout ───────────────────────────────────────────────────────────────
+
 	StyleBase = lipgloss.NewStyle().
-			Background(lipgloss.Color("#111827")).
+			Background(BgBase).
 			Foreground(lipgloss.Color("#F9FAFB"))
 
 	StyleHeader = lipgloss.NewStyle().
-			Background(lipgloss.Color("#1F2937")).
+			Background(BgPanel).
 			Foreground(colorHeader).
 			Padding(0, 1).
 			Bold(true)
@@ -37,12 +42,15 @@ var (
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(colorBorder)
 
-	// List
+	// ── List ─────────────────────────────────────────────────────────────────
+
 	StyleColumnHeader = lipgloss.NewStyle().
+				Background(BgBase).
 				Foreground(colorMuted).
 				Bold(true)
 
 	StyleRowNormal = lipgloss.NewStyle().
+			Background(BgBase).
 			Foreground(lipgloss.Color("#D1D5DB"))
 
 	StyleRowSelected = lipgloss.NewStyle().
@@ -51,46 +59,59 @@ var (
 				Bold(true)
 
 	StyleRowDim = lipgloss.NewStyle().
+			Background(BgBase).
 			Foreground(colorSubtle)
 
-	// Detail panel
+	// ── Detail panel ─────────────────────────────────────────────────────────
+
 	StyleDetailPanel = lipgloss.NewStyle().
 				BorderTop(true).
 				BorderStyle(lipgloss.NormalBorder()).
 				BorderForeground(colorBorder).
+				Background(BgBase).
 				Padding(0, 1)
 
 	StyleDetailTitle = lipgloss.NewStyle().
+				Background(BgBase).
 				Foreground(lipgloss.Color("#FFFFFF")).
 				Bold(true)
 
 	StyleDetailLabel = lipgloss.NewStyle().
+				Background(BgBase).
 				Foreground(colorMuted)
 
 	StyleDetailValue = lipgloss.NewStyle().
+				Background(BgBase).
 				Foreground(lipgloss.Color("#D1D5DB"))
 
 	StyleDetailDivider = lipgloss.NewStyle().
+				Background(BgBase).
 				Foreground(colorBorder)
 
 	StyleDetailEffect = lipgloss.NewStyle().
+				Background(BgBase).
 				Foreground(lipgloss.Color("#E5E7EB")).
 				Italic(true)
 
 	StyleDetailBurst = lipgloss.NewStyle().
+				Background(BgBase).
 				Foreground(lipgloss.Color("#FCD34D"))
 
-	// Command palette
+	// ── Command palette / overlays ────────────────────────────────────────────
+	// Overlay items use BgPanel so they blend with the overlay background.
+
 	StylePaletteOverlay = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colorAccent).
-				Background(lipgloss.Color("#1F2937")).
+				Background(BgPanel).
 				Padding(0, 1)
 
 	StylePaletteInput = lipgloss.NewStyle().
+				Background(BgPanel).
 				Foreground(lipgloss.Color("#FFFFFF"))
 
 	StylePaletteItem = lipgloss.NewStyle().
+				Background(BgPanel).
 				Foreground(lipgloss.Color("#D1D5DB")).
 				Padding(0, 1)
 
@@ -99,15 +120,24 @@ var (
 					Foreground(lipgloss.Color("#FFFFFF")).
 					Padding(0, 1)
 
+	// StylePaletteHint is for dim hint lines inside overlays (BgPanel context).
 	StylePaletteHint = lipgloss.NewStyle().
+				Background(BgPanel).
 				Foreground(colorMuted).
 				Italic(true)
 
-	// Rarity badges
-	StyleRarityC  = lipgloss.NewStyle().Foreground(colorMuted)
-	StyleRarityU  = lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA"))
-	StyleRarityR  = lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA"))
-	StyleRarityLR = lipgloss.NewStyle().Foreground(lipgloss.Color("#FCD34D")).Bold(true)
+	// StyleContentHint is for dim hint lines in the main content area (BgBase context).
+	StyleContentHint = lipgloss.NewStyle().
+				Background(BgBase).
+				Foreground(colorMuted).
+				Italic(true)
+
+	// ── Rarity badges ─────────────────────────────────────────────────────────
+
+	StyleRarityC  = lipgloss.NewStyle().Background(BgBase).Foreground(colorMuted)
+	StyleRarityU  = lipgloss.NewStyle().Background(BgBase).Foreground(lipgloss.Color("#60A5FA"))
+	StyleRarityR  = lipgloss.NewStyle().Background(BgBase).Foreground(lipgloss.Color("#A78BFA"))
+	StyleRarityLR = lipgloss.NewStyle().Background(BgBase).Foreground(lipgloss.Color("#FCD34D")).Bold(true)
 )
 
 // RarityStyle returns the appropriate style for a rarity string.
@@ -129,16 +159,16 @@ func CardColorSwatch(color string) string {
 	dot := "●"
 	switch color {
 	case "Blue":
-		return lipgloss.NewStyle().Foreground(colorBlue).Render(dot)
+		return lipgloss.NewStyle().Background(BgBase).Foreground(colorBlue).Render(dot)
 	case "Red":
-		return lipgloss.NewStyle().Foreground(colorRed).Render(dot)
+		return lipgloss.NewStyle().Background(BgBase).Foreground(colorRed).Render(dot)
 	case "Green":
-		return lipgloss.NewStyle().Foreground(colorGreen).Render(dot)
+		return lipgloss.NewStyle().Background(BgBase).Foreground(colorGreen).Render(dot)
 	case "White":
-		return lipgloss.NewStyle().Foreground(colorWhite).Render(dot)
+		return lipgloss.NewStyle().Background(BgBase).Foreground(colorWhite).Render(dot)
 	case "Purple":
-		return lipgloss.NewStyle().Foreground(colorPurple).Render(dot)
+		return lipgloss.NewStyle().Background(BgBase).Foreground(colorPurple).Render(dot)
 	default:
-		return lipgloss.NewStyle().Foreground(colorMuted).Render(dot)
+		return lipgloss.NewStyle().Background(BgBase).Foreground(colorMuted).Render(dot)
 	}
 }

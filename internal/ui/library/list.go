@@ -26,7 +26,7 @@ func renderList(m Model) string {
 	// Status bar: count + active filter summary
 	countStr := fmt.Sprintf("%d cards", m.total)
 	if !m.filtersActive {
-		countStr += "  · " + styles.StylePaletteHint.Render("filters paused")
+		countStr += "  · " + styles.StyleContentHint.Render("filters paused")
 	} else if summary := buildFilterSummary(m.filter); summary != "" {
 		countStr += "  · " + summary
 	}
@@ -69,7 +69,7 @@ func renderList(m Model) string {
 	if m.activeDeck != nil {
 		hint += " · enter add · del remove"
 	}
-	sb.WriteString(styles.StylePaletteHint.Render(hint))
+	sb.WriteString(styles.StyleContentHint.Render(hint))
 
 	return sb.String()
 }
@@ -141,11 +141,13 @@ func renderLayout(list, detail string, w, h int) string {
 	detailH := h - listH
 
 	listBox := lipgloss.NewStyle().
+		Background(styles.BgBase).
 		Height(listH).
 		Width(w).
 		Render(list)
 
 	detailBox := lipgloss.NewStyle().
+		Background(styles.BgBase).
 		Height(detailH).
 		Width(w).
 		Render(detail)
@@ -163,6 +165,7 @@ func renderWithTextInput(input string, w, h int) string {
 		lipgloss.Center, lipgloss.Top,
 		lipgloss.NewStyle().MarginTop(y).Render(box),
 		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceBackground(styles.BgBase),
 	)
 }
 
@@ -172,6 +175,7 @@ func renderWithFilterPalette(palette string, w, h int) string {
 		lipgloss.Center, lipgloss.Top,
 		lipgloss.NewStyle().MarginTop(y).Render(palette),
 		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceBackground(styles.BgBase),
 	)
 }
 

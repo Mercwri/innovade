@@ -26,8 +26,10 @@ const (
 )
 
 var Global = struct {
-	Quit    key.Binding
-	Palette key.Binding
+	Quit        key.Binding
+	Palette     key.Binding
+	GoLibrary   key.Binding
+	GoDeckBuild key.Binding
 }{
 	Quit: key.NewBinding(
 		key.WithKeys("ctrl+c", "q"),
@@ -36,6 +38,14 @@ var Global = struct {
 	Palette: key.NewBinding(
 		key.WithKeys("?", "ctrl+p"),
 		key.WithHelp("?", "palette"),
+	),
+	GoLibrary: key.NewBinding(
+		key.WithKeys("!"),
+		key.WithHelp("⇧1", "library"),
+	),
+	GoDeckBuild: key.NewBinding(
+		key.WithKeys("@"),
+		key.WithHelp("⇧2", "deck builder"),
 	),
 }
 
@@ -101,25 +111,41 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if colors := deckColors(msg.Deck, m.deckbuilder.CardStats()); len(colors) > 0 {
 			m.library.SetFilter(models.CardFilter{Colors: colors})
 		}
-		return m, m.library.ReloadCards()
+		return m, tea.Batch(
+			m.library.ReloadCards(),
+			saveSessionCmd(m.store, "active_deck_id", msg.Deck.ID),
+		)
 
 	case deckbuilder.DeckCreatedMsg:
 		m.activeDeck = msg.Deck
 		m.library.SetActiveDeck(msg.Deck)
 		m.activeView = ViewLibrary
-		return m, saveDeckCmd(m.store, msg.Deck)
+		return m, tea.Batch(
+			saveDeckCmd(m.store, msg.Deck),
+			saveSessionCmd(m.store, "active_deck_id", msg.Deck.ID),
+		)
 
 	case library.AddToDeckMsg:
 		if m.activeDeck != nil && m.activeDeck.CardCount(msg.CardCode) < models.MaxCopiesPerCard {
+			isNew := m.activeDeck.CardCount(msg.CardCode) == 0
 			m.activeDeck.AddCard(msg.CardCode)
-			m.library.SetActiveDeck(m.activeDeck)
+			if isNew {
+				m.library.SetActiveDeck(m.activeDeck) // new card → re-sort, cursor to top
+			} else {
+				m.library.RefreshActiveDeck(m.activeDeck) // quantity bump → stay put
+			}
 			return m, saveDeckCmd(m.store, m.activeDeck)
 		}
 
 	case library.RemoveFromDeckMsg:
 		if m.activeDeck != nil {
+			willLeave := m.activeDeck.CardCount(msg.CardCode) <= 1
 			m.activeDeck.RemoveCard(msg.CardCode)
-			m.library.SetActiveDeck(m.activeDeck)
+			if willLeave {
+				m.library.SetActiveDeck(m.activeDeck) // card gone → re-sort, cursor to top
+			} else {
+				m.library.RefreshActiveDeck(m.activeDeck) // quantity drop → stay put
+			}
 			return m, saveDeckCmd(m.store, m.activeDeck)
 		}
 
@@ -127,13 +153,37 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activeDeck != nil && m.activeDeck.ID == msg.ID {
 			m.activeDeck = nil
 			m.library.SetActiveDeck(nil)
+			cmds = append(cmds, saveSessionCmd(m.store, "active_deck_id", ""))
 		}
-		return m, m.deckbuilder.Reload()
+		return m, tea.Batch(append(cmds, m.deckbuilder.Reload())...)
 
 	case tea.KeyMsg:
-		// Global quit — always active
+		// When the deckbuilder is capturing text input, bypass all global
+		// hotkeys so characters like '?' don't open the palette.
+		if m.activeView == ViewDeckBuilder && m.deckbuilder.Capturing() {
+			var cmd tea.Cmd
+			m.deckbuilder, cmd = m.deckbuilder.Update(msg)
+			return m, cmd
+		}
+
+		// Global quit — save session then exit
 		if key.Matches(msg, Global.Quit) {
+			if m.activeDeck != nil {
+				_ = m.store.SetSessionValue("active_deck_id", m.activeDeck.ID)
+			}
 			return m, tea.Quit
+		}
+
+		// View-switch hotkeys (active even when palette is open)
+		if !m.paletteOpen {
+			if key.Matches(msg, Global.GoLibrary) {
+				m.activeView = ViewLibrary
+				return m, nil
+			}
+			if key.Matches(msg, Global.GoDeckBuild) {
+				m.activeView = ViewDeckBuilder
+				return m, m.deckbuilder.Reload()
+			}
 		}
 
 		// Palette toggle
@@ -212,7 +262,7 @@ func (m AppModel) View() string {
 
 func (m AppModel) renderHeader() string {
 	left := styles.StyleHeader.Render("INNOVADE")
-	right := styles.StyleHeaderMuted.Render("[?] palette")
+	right := styles.StyleHeaderMuted.Render("[⇧1] library  [⇧2] decks  [?] palette")
 
 	centerWidth := max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 0)
 	center := styles.StyleHeader.Width(centerWidth).Align(lipgloss.Center).Render(viewLabel(m.activeView))
@@ -223,6 +273,13 @@ func (m AppModel) renderHeader() string {
 type importResultMsg struct {
 	imported int
 	err      error
+}
+
+func saveSessionCmd(s *store.Store, key, value string) tea.Cmd {
+	return func() tea.Msg {
+		_ = s.SetSessionValue(key, value)
+		return nil
+	}
 }
 
 func saveDeckCmd(s *store.Store, d *models.Deck) tea.Cmd {

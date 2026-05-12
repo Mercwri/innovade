@@ -47,9 +47,10 @@ type DeckCreatedMsg struct{ Deck *models.Deck }
 type DeckDeletedMsg struct{ ID string }
 
 type decksLoadedMsg struct {
-	decks     []models.Deck
-	cardStats map[string]store.CardStat
-	err       error
+	decks        []models.Deck
+	cardStats    map[string]store.CardStat
+	activeDeckID string // from session; "" if none
+	err          error
 }
 
 type renameResultMsg struct {
@@ -82,23 +83,35 @@ type Model struct {
 
 	importOpen    bool
 	importPalette ImportPalette
+
+	urlImportOpen bool
+	urlInput      string
+
+	exportOpen    bool
+	exportPalette ExportPalette
 }
 
 func New(s *store.Store) Model {
 	return Model{store: s, cardStats: map[string]store.CardStat{}}
 }
 
-func (m Model) Init() tea.Cmd { return m.loadDecks() }
+func (m Model) Init() tea.Cmd { return m.loadDecks(true) }
 
 func (m *Model) SetSize(w, h int) {
 	m.width = w
 	m.height = h
 }
 
-func (m Model) Reload() tea.Cmd { return m.loadDecks() }
+func (m Model) Reload() tea.Cmd { return m.loadDecks(false) }
 
 // CardStats exposes the cached card stats for use by the root app.
 func (m Model) CardStats() map[string]store.CardStat { return m.cardStats }
+
+// Capturing reports whether the model is consuming all key input (text fields,
+// overlays). app.go uses this to bypass global hotkeys.
+func (m Model) Capturing() bool {
+	return m.urlImportOpen || m.renaming || m.importOpen || m.exportOpen
+}
 
 func (m Model) selectedDeck() *models.Deck {
 	if m.cursor > 0 && m.cursor-1 < len(m.decks) {
@@ -133,6 +146,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.cursor > len(m.decks) {
 			m.cursor = len(m.decks)
 		}
+		// Restore previously active deck from session.
+		if msg.activeDeckID != "" {
+			for i, d := range m.decks {
+				if d.ID == msg.activeDeckID {
+					m.cursor = i + 1 // +1: cursor 0 = ★ New Deck
+					deck := m.decks[i]
+					return m, func() tea.Msg { return DeckSelectedMsg{Deck: &deck} }
+				}
+			}
+		}
 		return m, nil
 
 	case renameResultMsg:
@@ -156,8 +179,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.err != nil {
 			m.status = fmt.Sprintf("export failed: %v", msg.err)
 			m.statusErr = true
-		} else {
+		} else if msg.path != "" {
 			m.status = fmt.Sprintf("Exported → %s", msg.path)
+			m.statusErr = false
+		} else {
+			m.status = msg.note
 			m.statusErr = false
 		}
 		return m, nil
@@ -169,7 +195,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		} else {
 			m.status = fmt.Sprintf("Imported '%s'", msg.deckName)
 			m.statusErr = false
-			return m, m.loadDecks()
+			return m, m.loadDecks(false)
 		}
 		return m, nil
 
@@ -197,6 +223,66 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Export palette overlay.
+		if m.exportOpen {
+			var action exportAction
+			m.exportPalette, action = m.exportPalette.Update(msg)
+			switch action {
+			case exportActionClose:
+				m.exportOpen = false
+			case exportActionFile:
+				m.exportOpen = false
+				d := m.decks[m.cursor-1]
+				stats := m.cardStats
+				nameFor := func(code string) string {
+					if s, ok := stats[code]; ok {
+						return s.Name
+					}
+					return code
+				}
+				return m, exportDeckCmd(d, nameFor)
+			case exportActionClipboard:
+				m.exportOpen = false
+				d := m.decks[m.cursor-1]
+				stats := m.cardStats
+				nameFor := func(code string) string {
+					if s, ok := stats[code]; ok {
+						return s.Name
+					}
+					return code
+				}
+				return m, copyToClipboardCmd(formatDeckList(&d, nameFor), "Decklist copied to clipboard")
+			case exportActionMSALink:
+				m.exportOpen = false
+				d := m.decks[m.cursor-1]
+				return m, copyToClipboardCmd(formatMSALink(&d), "MSA link copied to clipboard")
+			}
+			return m, nil
+		}
+
+		// URL import input mode.
+		if m.urlImportOpen {
+			switch msg.Type {
+			case tea.KeyEnter:
+				if rawURL := strings.TrimSpace(m.urlInput); rawURL != "" {
+					m.urlImportOpen = false
+					return m, importDeckUrlCmd(m.store, rawURL)
+				}
+				m.urlImportOpen = false
+			case tea.KeyEscape:
+				m.urlImportOpen = false
+				m.urlInput = ""
+			case tea.KeyBackspace, tea.KeyDelete:
+				runes := []rune(m.urlInput)
+				if len(runes) > 0 {
+					m.urlInput = string(runes[:len(runes)-1])
+				}
+			case tea.KeyRunes:
+				m.urlInput += string(msg.Runes)
+			}
+			return m, nil
+		}
+
 		// Import palette overlay.
 		if m.importOpen {
 			var action importAction
@@ -208,6 +294,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				file := m.importPalette.selectedFile()
 				m.importOpen = false
 				return m, importDeckCmd(m.store, file)
+			case importActionURL:
+				m.importOpen = false
+				m.urlImportOpen = true
+				m.urlInput = ""
 			}
 			return m, nil
 		}
@@ -261,25 +351,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		case key.Matches(msg, dbKeys.Export):
 			if m.cursor > 0 {
-				d := m.decks[m.cursor-1]
-				stats := m.cardStats
-				nameFor := func(code string) string {
-					if s, ok := stats[code]; ok {
-						return s.Name
-					}
-					return code
-				}
-				return m, exportDeckCmd(d, nameFor)
+				m.exportPalette = ExportPalette{}
+				m.exportOpen = true
 			}
 		case key.Matches(msg, dbKeys.Import):
-			p := NewImportPalette()
-			if len(p.files) == 0 {
-				m.status = "No .txt files found in current directory"
-				m.statusErr = true
-			} else {
-				m.importPalette = p
-				m.importOpen = true
-			}
+			m.importPalette = NewImportPalette()
+			m.importOpen = true
 		}
 	}
 	return m, nil
@@ -289,10 +366,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 // listVisibleRows: rows available in the left pane for deck name entries.
 // Fixed rows: title(1)+divider(1)+newDeck(1)+postNewDivider(1)+
-//             curveLabel(1)+curveHeader(1)+curveRows(4)+
-//             hintDivider(1)+hints(2)+statusReserve(1) = 15
+//             analysisDivider(1)+curveHeader(1)+curveRows(4)+totalsDivider(1)+totalsRow(1)+
+//             barRows(4)+barAxis(1)+
+//             hintDivider(1)+hints(2)+statusReserve(1) = 21
 func (m Model) listVisibleRows() int {
-	v := m.height - 15
+	v := m.height - 21
 	if v < 0 {
 		return 0
 	}
@@ -332,16 +410,22 @@ func (m Model) View() string {
 	if !m.loaded {
 		return "Loading decks..."
 	}
+	if m.urlImportOpen {
+		return renderURLImportOverlay(m.urlInput, m.width, m.height)
+	}
 	if m.importOpen {
 		return renderImportOverlay(m.importPalette.View(), m.width, m.height)
+	}
+	if m.exportOpen {
+		return renderImportOverlay(m.exportPalette.View(), m.width, m.height)
 	}
 
 	leftW := m.width * 2 / 5
 	rightW := m.width - leftW
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.NewStyle().Width(leftW).Height(m.height).Render(m.renderLeft(leftW)),
-		lipgloss.NewStyle().Width(rightW).Height(m.height).Render(m.renderRight(rightW)),
+		lipgloss.NewStyle().Width(leftW).Height(m.height).Background(styles.BgBase).Render(m.renderLeft(leftW)),
+		lipgloss.NewStyle().Width(rightW).Height(m.height).Background(styles.BgBase).Render(m.renderRight(rightW)),
 	)
 }
 
@@ -351,6 +435,7 @@ func renderImportOverlay(palette string, w, h int) string {
 		lipgloss.Center, lipgloss.Top,
 		lipgloss.NewStyle().MarginTop(y).Render(palette),
 		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceBackground(styles.BgBase),
 	)
 }
 
@@ -401,9 +486,9 @@ func (m Model) renderLeft(w int) string {
 	// Hints
 	sb.WriteString(div)
 	sb.WriteString("\n")
-	sb.WriteString(styles.StylePaletteHint.Render("↑↓ nav · enter activate · n new · x del"))
+	sb.WriteString(styles.StyleContentHint.Render("↑↓ nav · enter activate · n new · x del"))
 	sb.WriteString("\n")
-	sb.WriteString(styles.StylePaletteHint.Render("r rename · e export · i import · PgDn/PgUp scroll →"))
+	sb.WriteString(styles.StyleContentHint.Render("r rename · e export · i import · PgDn/PgUp scroll →"))
 
 	if m.status != "" {
 		sb.WriteString("\n")
@@ -454,18 +539,14 @@ func (m Model) renderDeckRow(deckIdx int, w int) string {
 	return styles.StyleRowNormal.Render(row)
 }
 
-// renderCurveGrid draws the level×category distribution for the selected deck.
-// Columns: levels 1–9. Rows: Unit, Command, Pilot, Base. Last column: Σ total.
-//
-//	     1  2  3  4  5  6  7  8  9  Σ
-//	Unt  ·  ·  4  3  2  ·  ·  ·  ·  9
-//	Cmd  ·  2  1  ·  ·  ·  ·  ·  ·  3
+// renderCurveGrid draws the level×category grid, a totals row, and a bar chart.
 func (m Model) renderCurveGrid(w int) string {
 	const (
-		minLv = 1
-		maxLv = 9
-		catW  = 4 // "Unt " etc.
-		colW  = 3 // each level column and Σ column
+		minLv  = 1
+		maxLv  = 9
+		catW   = 4 // label column width
+		colW   = 3 // per-level and Σ column width
+		chartH = 4 // bar chart height in rows
 	)
 
 	type catDef struct {
@@ -481,33 +562,34 @@ func (m Model) renderCurveGrid(w int) string {
 
 	deck := m.selectedDeck()
 
-	// Build counts[cat][level]
+	// counts[cat][level], totals[level]
 	counts := [4][maxLv + 1]int{}
+	var lvTotals [maxLv + 1]int
 	if deck != nil {
 		for _, e := range deck.Entries {
 			s, ok := m.cardStats[e.CardCode]
 			if !ok {
 				continue
 			}
+			lv := s.Level
+			if lv < 0 {
+				lv = 0
+			}
+			if lv > maxLv {
+				lv = maxLv
+			}
+			lvTotals[lv] += e.Quantity
 			for ci, cat := range cats {
-				if s.Category != cat.kind {
-					continue
+				if s.Category == cat.kind {
+					counts[ci][lv] += e.Quantity
 				}
-				lv := s.Level
-				if lv < 0 {
-					lv = 0
-				}
-				if lv > maxLv {
-					lv = maxLv
-				}
-				counts[ci][lv] += e.Quantity
 			}
 		}
 	}
 
 	var sb strings.Builder
 
-	// Header row: blank label col + level numbers + Σ
+	// ── Header row ────────────────────────────────────────────────────────────
 	hdr := fmt.Sprintf("%-*s", catW, "")
 	for lv := minLv; lv <= maxLv; lv++ {
 		hdr += fmt.Sprintf("%*d", colW, lv)
@@ -516,7 +598,7 @@ func (m Model) renderCurveGrid(w int) string {
 	sb.WriteString(styles.StyleColumnHeader.Render(hdr))
 	sb.WriteString("\n")
 
-	// Data rows
+	// ── Category rows ─────────────────────────────────────────────────────────
 	for ci, cat := range cats {
 		total := 0
 		row := fmt.Sprintf("%-*s", catW, cat.label)
@@ -537,6 +619,60 @@ func (m Model) renderCurveGrid(w int) string {
 		sb.WriteString(styles.StyleDetailLabel.Render(row))
 		sb.WriteString("\n")
 	}
+
+	// ── Totals row ────────────────────────────────────────────────────────────
+	divLen := catW + (maxLv-minLv+1)*colW + colW
+	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", divLen)))
+	sb.WriteString("\n")
+
+	grandTotal := 0
+	totRow := fmt.Sprintf("%-*s", catW, "Tot")
+	for lv := minLv; lv <= maxLv; lv++ {
+		n := lvTotals[lv]
+		grandTotal += n
+		if n == 0 {
+			totRow += fmt.Sprintf("%*s", colW, "·")
+		} else {
+			totRow += fmt.Sprintf("%*d", colW, n)
+		}
+	}
+	if grandTotal == 0 {
+		totRow += fmt.Sprintf("%*s", colW, "·")
+	} else {
+		totRow += fmt.Sprintf("%*d", colW, grandTotal)
+	}
+	sb.WriteString(styles.StyleDetailValue.Render(totRow))
+	sb.WriteString("\n")
+
+	// ── Bar chart (level distribution) ───────────────────────────────────────
+	maxV := 0
+	for lv := minLv; lv <= maxLv; lv++ {
+		if lvTotals[lv] > maxV {
+			maxV = lvTotals[lv]
+		}
+	}
+
+	for row := chartH; row >= 1; row-- {
+		line := fmt.Sprintf("%-*s", catW, "")
+		for lv := minLv; lv <= maxLv; lv++ {
+			var cell string
+			if maxV > 0 && lvTotals[lv]*chartH/maxV >= row {
+				cell = "█"
+			} else {
+				cell = " "
+			}
+			line += fmt.Sprintf("%*s", colW, cell)
+		}
+		sb.WriteString(styles.StyleDetailValue.Render(line))
+		sb.WriteString("\n")
+	}
+	// Axis label row
+	axis := fmt.Sprintf("%-*s", catW, "")
+	for lv := minLv; lv <= maxLv; lv++ {
+		axis += fmt.Sprintf("%*d", colW, lv)
+	}
+	sb.WriteString(styles.StyleDetailLabel.Render(axis))
+	sb.WriteString("\n")
 
 	return sb.String()
 }
@@ -625,7 +761,7 @@ func (m Model) renderRight(w int) string {
 			}
 			sb.WriteString(div)
 			sb.WriteString("\n")
-			sb.WriteString(styles.StylePaletteHint.Render(
+			sb.WriteString(styles.StyleContentHint.Render(
 				fmt.Sprintf("  %d%%  PgUp/PgDn to scroll deck", pct),
 			))
 		}
@@ -636,7 +772,7 @@ func (m Model) renderRight(w int) string {
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-func (m Model) loadDecks() tea.Cmd {
+func (m Model) loadDecks(restoreSession bool) tea.Cmd {
 	s := m.store
 	return func() tea.Msg {
 		decks, err := s.ListDecks()
@@ -659,7 +795,12 @@ func (m Model) loadDecks() tea.Cmd {
 		if err != nil {
 			stats = map[string]store.CardStat{}
 		}
-		return decksLoadedMsg{decks: decks, cardStats: stats}
+
+		var activeDeckID string
+		if restoreSession {
+			activeDeckID, _ = s.GetSessionValue("active_deck_id")
+		}
+		return decksLoadedMsg{decks: decks, cardStats: stats, activeDeckID: activeDeckID}
 	}
 }
 
