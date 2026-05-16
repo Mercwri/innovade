@@ -2,6 +2,8 @@ package library
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -27,6 +29,7 @@ type Model struct {
 	cursor int
 	offset int // first visible row index
 	listH  int // visible rows in list
+	listW  int // width of left list panel
 	width  int
 	height int
 
@@ -41,6 +44,10 @@ type Model struct {
 
 	// Deck editing state
 	activeDeck *models.Deck
+
+	// Art
+	imageDir      string          // local directory for cached card images
+	downloadingArt map[string]bool // card codes currently being fetched
 
 	loaded bool
 	err    error
@@ -63,11 +70,18 @@ type AddToDeckMsg struct{ CardCode string }
 // RemoveFromDeckMsg is sent when the user wants to remove the selected card from the active deck.
 type RemoveFromDeckMsg struct{ CardCode string }
 
+// ImageReadyMsg is sent when a card image has been downloaded to disk.
+type ImageReadyMsg struct{ CardCode string }
+
 func New(s *store.Store) (Model, error) {
 	m := Model{
-		store:         s,
-		filter:        models.CardFilter{ExcludeTokens: false},
-		filtersActive: true,
+		store:          s,
+		filter:         models.CardFilter{ExcludeTokens: false},
+		filtersActive:  true,
+		downloadingArt: make(map[string]bool),
+	}
+	if dir, err := store.DataDir(); err == nil {
+		m.imageDir = filepath.Join(dir, "images")
 	}
 	return m, nil
 }
@@ -90,8 +104,8 @@ func (m *Model) SetError(err error) {
 func (m *Model) SetSize(w, h int) {
 	m.width = w
 	m.height = h
-	// Reserve bottom portion for detail panel
-	m.listH = h * 2 / 3
+	m.listH = h
+	m.listW = w * 55 / 100
 }
 
 // SetActiveDeck updates the deck being edited in the library view and
@@ -102,7 +116,7 @@ func (m *Model) SetActiveDeck(d *models.Deck) {
 		sortDeckCardsFirst(m.cards, d)
 		m.cursor = 0
 		m.offset = 0
-		m.updateSelected()
+		m.updateSelected() // download cmd discarded; deck switch doesn't need it
 	}
 }
 
@@ -145,7 +159,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.cursor = 0
 		m.offset = 0
-		m.updateSelected()
+		cmds = append(cmds, m.updateSelected())
+		return m, tea.Batch(cmds...)
+
+	case ImageReadyMsg:
+		delete(m.downloadingArt, msg.CardCode)
 		return m, nil
 
 	case FilterAppliedMsg:
@@ -191,21 +209,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		switch {
 		case key.Matches(msg, keys.Library.Up):
-			m.moveCursor(-1)
+			cmds = append(cmds, m.moveCursor(-1))
 		case key.Matches(msg, keys.Library.Down):
-			m.moveCursor(1)
+			cmds = append(cmds, m.moveCursor(1))
 		case key.Matches(msg, keys.Library.Top):
 			m.cursor = 0
 			m.offset = 0
-			m.updateSelected()
+			cmds = append(cmds, m.updateSelected())
 		case key.Matches(msg, keys.Library.Bottom):
 			m.cursor = len(m.cards) - 1
 			m.scrollToSelected()
-			m.updateSelected()
+			cmds = append(cmds, m.updateSelected())
 		case key.Matches(msg, keys.Library.PageUp):
-			m.moveCursor(-m.visibleRows())
+			cmds = append(cmds, m.moveCursor(-m.visibleRows()))
 		case key.Matches(msg, keys.Library.PageDown):
-			m.moveCursor(m.visibleRows())
+			cmds = append(cmds, m.moveCursor(m.visibleRows()))
 		case key.Matches(msg, keys.Library.FindLinks):
 			if m.selected != nil {
 				if f, ok := buildLinkFilter(m.selected); ok {
@@ -307,7 +325,7 @@ func buildLinkFilter(card *models.Card) (models.CardFilter, bool) {
 	return models.CardFilter{}, false
 }
 
-func (m *Model) moveCursor(delta int) {
+func (m *Model) moveCursor(delta int) tea.Cmd {
 	m.cursor += delta
 	if m.cursor < 0 {
 		m.cursor = 0
@@ -316,7 +334,7 @@ func (m *Model) moveCursor(delta int) {
 		m.cursor = len(m.cards) - 1
 	}
 	m.scrollToSelected()
-	m.updateSelected()
+	return m.updateSelected()
 }
 
 // visibleRows returns the number of card rows that fit in the list area,
@@ -339,12 +357,38 @@ func (m *Model) scrollToSelected() {
 	}
 }
 
-func (m *Model) updateSelected() {
+// updateSelected sets m.selected and returns a download command if the card's
+// image isn't cached locally yet.
+func (m *Model) updateSelected() tea.Cmd {
 	if len(m.cards) == 0 {
 		m.selected = nil
-		return
+		return nil
 	}
 	m.selected = &m.cards[m.cursor]
+	return m.maybeDownloadArt(m.selected)
+}
+
+// maybeDownloadArt returns a Cmd that downloads the card's default image if it
+// isn't present on disk and isn't already being fetched.
+func (m *Model) maybeDownloadArt(card *models.Card) tea.Cmd {
+	if m.imageDir == "" || card == nil || card.DefaultImagePath == "" {
+		return nil
+	}
+	if m.downloadingArt[card.CardCode] {
+		return nil
+	}
+	localPath := filepath.Join(m.imageDir, card.DefaultImagePath)
+	if _, err := os.Stat(localPath); err == nil {
+		return nil // already on disk
+	}
+
+	m.downloadingArt[card.CardCode] = true
+	cardCode := card.CardCode
+	filename := card.DefaultImagePath
+	return func() tea.Msg {
+		_ = downloadArt(localPath, filename) // failure is silent; placeholder shows instead
+		return ImageReadyMsg{CardCode: cardCode}
+	}
 }
 
 func (m *Model) loadCards() tea.Cmd {
@@ -385,8 +429,14 @@ func (m Model) View() string {
 		return "No cards imported yet.\n\nPress [?] to open the palette and import cards."
 	}
 
+	var imagePath string
+	if m.selected != nil && m.selected.DefaultImagePath != "" && m.imageDir != "" {
+		imagePath = filepath.Join(m.imageDir, m.selected.DefaultImagePath)
+	}
+
+	detailW := m.width - m.listW
 	list := renderList(m)
-	detail := renderDetail(m.selected, m.width)
+	detail := renderDetail(m.selected, detailW, m.height, imagePath)
 
 	if m.textInputOpen {
 		return renderWithTextInput(m.textInput, m.width, m.height)
@@ -395,5 +445,5 @@ func (m Model) View() string {
 		return renderWithFilterPalette(m.filterPalette.View(), m.width, m.height)
 	}
 
-	return renderLayout(list, detail, m.width, m.height)
+	return renderLayout(list, detail, m.listW, m.width, m.height)
 }

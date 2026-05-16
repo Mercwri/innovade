@@ -4,94 +4,107 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/Mercwri/innovade/internal/models"
 	"github.com/Mercwri/innovade/internal/ui/styles"
 )
 
-func renderDetail(card *models.Card, width int) string {
+func renderDetail(card *models.Card, width, height int, imagePath string) string {
 	if card == nil {
-		return styles.StyleDetailPanel.Width(width).Render(
+		return styles.StyleDetailPanel.Width(width - 1).Render(
 			styles.StyleDetailLabel.Render("No card selected"),
 		)
 	}
 
-	inner := width - 2 // account for panel padding
+	// StyleDetailPanel has BorderLeft(1) + Padding(0,1).
+	// Width() includes padding but not border, so Width(width-1) renders at total width `width`.
+	// Content area = (width-1) - 2(padding) = width-3.
+	inner := max(1, width-3)
+
+	// Reserve ~45% of terminal height for card text; give the rest to the art.
+	maxArtH := height * 55 / 100
 
 	var sb strings.Builder
 
-	// Line 1: name · code · rarity · color swatch
-	name := styles.StyleDetailTitle.Render(card.Name)
-	code := styles.StyleDetailLabel.Render(fmt.Sprintf("[%s]", card.CardCode))
+	// ── Art frame ────────────────────────────────────────────────────────────
+	sb.WriteString(renderArtFrame(imagePath, inner, maxArtH))
+	sb.WriteString("\n\n")
+
+	// ── Name ─────────────────────────────────────────────────────────────────
+	sb.WriteString(styles.StyleDetailTitle.Render(card.Name))
+	sb.WriteString("\n")
+
+	// ── Code · rarity · color ────────────────────────────────────────────────
+	code := styles.StyleDetailLabel.Render("[" + card.CardCode + "]")
 	rarity := styles.RarityStyle(string(card.Rarity)).Render(string(card.Rarity))
-	colorDot := ""
+	infoLine := code + "  " + rarity
 	if len(card.Colors) > 0 {
-		colorDot = styles.CardColorSwatch(string(card.Colors[0])) + " " +
+		colorPart := styles.CardColorSwatch(string(card.Colors[0])) + " " +
 			styles.StyleDetailValue.Render(string(card.Colors[0]))
+		infoLine += "  " + colorPart
 	}
-	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
-		name, "  ", code, "  ", rarity, "  ", colorDot,
-	))
+	sb.WriteString(infoLine)
 	sb.WriteString("\n")
 
-	// Line 2: stats
-	sb.WriteString(renderStatLine(card))
-	sb.WriteString("\n")
-
-	// Line 3: types
-	if len(card.Types) > 0 {
-		sb.WriteString(styles.StyleDetailLabel.Render(strings.Join(card.Types, ", ")))
+	// ── Stats ─────────────────────────────────────────────────────────────────
+	if statsLine := renderStatLine(card); statsLine != "" {
+		sb.WriteString(statsLine)
 		sb.WriteString("\n")
 	}
 
-	// Line 4: locations
+	// ── Types · locations ─────────────────────────────────────────────────────
+	var tags []string
+	if len(card.Types) > 0 {
+		tags = append(tags, styles.StyleDetailLabel.Render(strings.Join(card.Types, ", ")))
+	}
 	if len(card.Locations) > 0 {
 		locs := make([]string, len(card.Locations))
 		for i, l := range card.Locations {
 			locs[i] = string(l)
 		}
-		sb.WriteString(styles.StyleDetailLabel.Render("⬡ " + strings.Join(locs, " · ")))
+		tags = append(tags, styles.StyleDetailLabel.Render("⬡ "+strings.Join(locs, " · ")))
+	}
+	if len(tags) > 0 {
+		sb.WriteString(strings.Join(tags, "  "))
 		sb.WriteString("\n")
 	}
 
-	// Divider
+	// ── Divider ───────────────────────────────────────────────────────────────
 	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", inner)))
 	sb.WriteString("\n")
 
-	// Effect text
+	// ── Effect ────────────────────────────────────────────────────────────────
 	if card.Effect != "" {
-		wrapped := wordWrap(card.Effect, inner)
-		sb.WriteString(styles.StyleDetailEffect.Render(wrapped))
+		sb.WriteString("\n")
+		sb.WriteString(styles.StyleDetailEffect.Render(wordWrap(card.Effect, inner)))
 		sb.WriteString("\n")
 	}
 
-	// Burst
+	// ── Burst ─────────────────────────────────────────────────────────────────
 	if card.HasBurst() {
 		sb.WriteString("\n")
-		sb.WriteString(styles.StyleDetailLabel.Render("【Burst】"))
+		sb.WriteString(styles.StyleDetailBurst.Bold(true).Render("【Burst】"))
 		sb.WriteString("\n")
 		sb.WriteString(styles.StyleDetailBurst.Render(wordWrap(card.Burst, inner)))
 		sb.WriteString("\n")
 	}
 
-	// Link requirement
+	// ── Link requirement ──────────────────────────────────────────────────────
 	if card.HasLinkRequirement() {
 		sb.WriteString("\n")
-		sb.WriteString(styles.StyleDetailLabel.Render("Link: "))
+		sb.WriteString(styles.StyleDetailLabel.Render("Link  "))
 		sb.WriteString(styles.StyleDetailValue.Render(card.LinkRequirement))
 		sb.WriteString("\n")
 	}
 
-	// Alt art indicator
+	// ── Alt art count ─────────────────────────────────────────────────────────
 	if card.AltArtCount() > 0 {
-		sb.WriteString(styles.StyleDetailLabel.Render(
-			fmt.Sprintf("  +%d alternate art(s)", card.AltArtCount()),
+		sb.WriteString(styles.StyleContentHint.Render(
+			fmt.Sprintf("+%d alternate art(s)", card.AltArtCount()),
 		))
 		sb.WriteString("\n")
 	}
 
-	return styles.StyleDetailPanel.Width(width).Render(sb.String())
+	return styles.StyleDetailPanel.Width(width - 1).Render(sb.String())
 }
 
 func renderStatLine(card *models.Card) string {
@@ -123,6 +136,9 @@ func renderStatLine(card *models.Card) string {
 		)
 	}
 
+	if len(parts) == 0 {
+		return ""
+	}
 	return styles.StyleDetailValue.Render(strings.Join(parts, " · "))
 }
 

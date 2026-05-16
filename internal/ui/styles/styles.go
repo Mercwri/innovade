@@ -12,7 +12,8 @@ var (
 	colorMuted    = lipgloss.Color("#6B7280")
 	colorSubtle   = lipgloss.Color("#374151")
 	colorSelected = lipgloss.Color("#1E1B4B")
-	colorBorder   = lipgloss.Color("#4B5563")
+	colorBorder = lipgloss.Color("#4B5563")
+	ColorBorder = colorBorder // exported for use outside the styles package
 	colorHeader   = lipgloss.Color("#F9FAFB")
 
 	// Card colors
@@ -65,7 +66,7 @@ var (
 	// ── Detail panel ─────────────────────────────────────────────────────────
 
 	StyleDetailPanel = lipgloss.NewStyle().
-				BorderTop(true).
+				BorderLeft(true).
 				BorderStyle(lipgloss.NormalBorder()).
 				BorderForeground(colorBorder).
 				Background(BgBase).

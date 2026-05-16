@@ -292,6 +292,51 @@ func (s *Store) GetCardStatsByCodes(codes []string) (map[string]CardStat, error)
 	return result, colorRows.Err()
 }
 
+// GetCardsByCodeMap returns the full Card record for each provided code.
+// Colours, types, locations, and images are hydrated in bulk.
+func (s *Store) GetCardsByCodeMap(codes []string) (map[string]models.Card, error) {
+	if len(codes) == 0 {
+		return map[string]models.Card{}, nil
+	}
+	ph := placeholders(len(codes))
+	args := make([]any, len(codes))
+	for i, c := range codes {
+		args[i] = c
+	}
+
+	rows, err := s.db.Query(`
+		SELECT id, card_code, set_code, name, category, rarity, created_at,
+		       cost, level, ap, hp, effect, burst, link_requirement, default_image_path
+		FROM cards WHERE card_code IN (`+ph+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get cards by code: %w", err)
+	}
+
+	var cardSlice []models.Card
+	for rows.Next() {
+		card, err := scanCard(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		cardSlice = append(cardSlice, *card)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := s.hydrateCards(cardSlice); err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]models.Card, len(cardSlice))
+	for _, c := range cardSlice {
+		result[c.CardCode] = c
+	}
+	return result, nil
+}
+
 // GetCardNamesByCodes returns a map of card code → name for the given codes.
 func (s *Store) GetCardNamesByCodes(codes []string) (map[string]string, error) {
 	if len(codes) == 0 {

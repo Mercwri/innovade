@@ -36,7 +36,7 @@ func renderList(m Model) string {
 	// Column headers
 	sb.WriteString(renderColumnHeaders(m.activeDeck != nil))
 	sb.WriteString("\n")
-	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", m.width)))
+	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", m.listW)))
 	sb.WriteString("\n")
 
 	// Visible rows — visibleRows() already reserves the hint row so the
@@ -136,23 +136,21 @@ func formatColor(card models.Card) string {
 	return styles.CardColorSwatch(c) + " " + c
 }
 
-func renderLayout(list, detail string, w, h int) string {
-	listH := h * 2 / 3
-	detailH := h - listH
+func renderLayout(list, detail string, listW, w, h int) string {
+	detailW := w - listW
 
 	listBox := lipgloss.NewStyle().
 		Background(styles.BgBase).
-		Height(listH).
-		Width(w).
+		Height(h).
+		Width(listW).
 		Render(list)
 
 	detailBox := lipgloss.NewStyle().
-		Background(styles.BgBase).
-		Height(detailH).
-		Width(w).
+		Height(h).
+		Width(detailW).
 		Render(detail)
 
-	return lipgloss.JoinVertical(lipgloss.Left, listBox, detailBox)
+	return lipgloss.JoinHorizontal(lipgloss.Top, listBox, detailBox)
 }
 
 func renderWithTextInput(input string, w, h int) string {

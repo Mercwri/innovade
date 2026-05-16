@@ -9,6 +9,7 @@ import (
 
 	"github.com/Mercwri/innovade/internal/models"
 	"github.com/Mercwri/innovade/internal/store"
+	"github.com/Mercwri/innovade/internal/ui/analysis"
 	"github.com/Mercwri/innovade/internal/ui/deckbuilder"
 	"github.com/Mercwri/innovade/internal/ui/library"
 	"github.com/Mercwri/innovade/internal/ui/palette"
@@ -59,6 +60,7 @@ type AppModel struct {
 	activeView  View
 	library     library.Model
 	deckbuilder deckbuilder.Model
+	analysis    analysis.Model
 
 	activeDeck *models.Deck
 
@@ -78,6 +80,7 @@ func New(s *store.Store) (AppModel, error) {
 		activeView:  ViewLibrary,
 		library:     lib,
 		deckbuilder: deckbuilder.New(s),
+		analysis:    analysis.New(s),
 	}, nil
 }
 
@@ -102,6 +105,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.library.SetSize(msg.Width, msg.Height-1) // -1 for header
 		m.deckbuilder.SetSize(msg.Width, msg.Height-1)
+		m.analysis.SetSize(msg.Width, msg.Height-1)
 		return m, nil
 
 	case deckbuilder.DeckSelectedMsg:
@@ -229,6 +233,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.deckbuilder, cmd = m.deckbuilder.Update(msg)
 			cmds = append(cmds, cmd)
+		case ViewAnalysis:
+			var cmd tea.Cmd
+			m.analysis, cmd = m.analysis.Update(msg)
+			cmds = append(cmds, cmd)
 		}
 	}
 
@@ -244,6 +252,8 @@ func (m AppModel) View() string {
 		body = m.library.View()
 	case ViewDeckBuilder:
 		body = m.deckbuilder.View()
+	case ViewAnalysis:
+		body = m.analysis.View()
 	default:
 		body = "Coming soon"
 	}
@@ -307,6 +317,7 @@ func (m AppModel) handlePaletteAction(action palette.PaletteAction) (AppModel, t
 		m.activeView = ViewDeckLibrary
 	case palette.ActionOpenAnalysis:
 		m.activeView = ViewAnalysis
+		return m, m.analysis.SetDeck(m.activeDeck)
 	case palette.ActionQuit:
 		return m, tea.Quit
 	case palette.ActionFilterLibrary:
