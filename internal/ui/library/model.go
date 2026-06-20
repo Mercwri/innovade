@@ -64,6 +64,12 @@ type FilterAppliedMsg struct {
 	Filter models.CardFilter
 }
 
+// SetsLoadedMsg is sent when the set list fetch completes.
+type SetsLoadedMsg struct {
+	Sets []models.CardSet
+	Err  error
+}
+
 // AddToDeckMsg is sent when the user wants to add the selected card to the active deck.
 type AddToDeckMsg struct{ CardCode string }
 
@@ -136,9 +142,14 @@ func (m *Model) SetFilter(f models.CardFilter) {
 }
 
 // OpenFilterPalette is called by the root app when the palette routes here.
-func (m *Model) OpenFilterPalette() {
+func (m *Model) OpenFilterPalette() tea.Cmd {
 	m.filterPaletteOpen = true
 	m.filterPalette = NewFilterPalette(m.filter, m.filtersActive)
+	s := m.store
+	return func() tea.Msg {
+		sets, err := s.GetAllSets()
+		return SetsLoadedMsg{Sets: sets, Err: err}
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -164,6 +175,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case ImageReadyMsg:
 		delete(m.downloadingArt, msg.CardCode)
+		return m, nil
+
+	case SetsLoadedMsg:
+		if msg.Err == nil {
+			m.filterPalette.sets = msg.Sets
+		}
 		return m, nil
 
 	case FilterAppliedMsg:
@@ -237,7 +254,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.offset = 0
 			return m, m.loadCards()
 		case key.Matches(msg, keys.Library.OpenFilter):
-			m.OpenFilterPalette()
+			cmds = append(cmds, m.OpenFilterPalette())
 		case key.Matches(msg, keys.Library.TextFilter):
 			m.textInputOpen = true
 			m.textInput = m.filter.Name

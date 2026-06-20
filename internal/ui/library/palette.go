@@ -112,8 +112,9 @@ type FilterPalette struct {
 	cursor        int
 	current       models.CardFilter
 	filtersActive bool
-	pendingColors []models.Color // staged selection for the color phase
-	pendingSets   []string       // staged selection for the set phase
+	pendingColors []models.Color   // staged selection for the color phase
+	pendingSets   []string         // staged selection for the set phase
+	sets          []models.CardSet // dynamically loaded from DB
 }
 
 func NewFilterPalette(current models.CardFilter, active bool) FilterPalette {
@@ -201,8 +202,10 @@ func (m FilterPalette) enterPhase(phase filterPhase) FilterPalette {
 	case phaseSetSelect:
 		if len(m.current.SetCodes) == 0 {
 			// no set filter active — show all as checked
-			m.pendingSets = make([]string, len(setEntries))
-			copy(m.pendingSets, setEntries)
+			m.pendingSets = make([]string, len(m.sets))
+			for i, s := range m.sets {
+				m.pendingSets[i] = s.Code
+			}
 		} else {
 			m.pendingSets = make([]string, len(m.current.SetCodes))
 			copy(m.pendingSets, m.current.SetCodes)
@@ -317,17 +320,19 @@ func (m FilterPalette) updateSetSelect(msg tea.Msg) (FilterPalette, FilterAction
 		}
 
 	case key.Matches(km, filterKeys.Down):
-		if m.cursor < len(setEntries)-1 {
+		if m.cursor < len(m.sets)-1 {
 			m.cursor++
 		}
 
 	case key.Matches(km, filterKeys.Space):
-		m.pendingSets = toggleSet(m.pendingSets, setEntries[m.cursor])
+		if m.cursor < len(m.sets) {
+			m.pendingSets = toggleSet(m.pendingSets, m.sets[m.cursor].Code)
+		}
 
 	case key.Matches(km, filterKeys.Select):
 		f := m.current
-		// all sets checked == no filter
-		if len(m.pendingSets) == 0 || len(m.pendingSets) == len(setEntries) {
+		// all sets checked (or none) == no filter
+		if len(m.pendingSets) == 0 || len(m.pendingSets) == len(m.sets) {
 			f.SetCodes = nil
 		} else {
 			f.SetCodes = m.pendingSets
@@ -361,7 +366,7 @@ func (m FilterPalette) View() string {
 	case phaseCategorySelect:
 		m.viewList(&sb, "Select Category", categoryListRows(), "↑↓/jk · enter select · esc back")
 	case phaseSetSelect:
-		m.viewList(&sb, "Select Sets to Include", setListRows(m.pendingSets), "space toggle · enter apply · esc back")
+		m.viewList(&sb, "Select Sets to Include", setListRows(m.sets, m.pendingSets), "space toggle · enter apply · esc back")
 	}
 
 	return styles.StylePaletteOverlay.Width(fOverlayW).Render(sb.String())
@@ -471,24 +476,18 @@ func categoryListRows() []listRow {
 	return rows
 }
 
-var setEntries = []string{
-	"ST01", "ST02", "ST03", "ST04", "ST05", "ST06", "ST07", "ST08", "ST09",
-	"GD01", "GD02", "GD03", "GD04",
-	"EB01",
-}
-
-func setListRows(pending []string) []listRow {
+func setListRows(sets []models.CardSet, pending []string) []listRow {
 	selected := make(map[string]bool, len(pending))
 	for _, s := range pending {
 		selected[s] = true
 	}
-	rows := make([]listRow, len(setEntries))
-	for i, e := range setEntries {
+	rows := make([]listRow, len(sets))
+	for i, e := range sets {
 		prefix := "  "
-		if selected[e] {
+		if selected[e.Code] {
 			prefix = "✓ "
 		}
-		rows[i] = listRow{label: prefix + e}
+		rows[i] = listRow{label: prefix + e.Code}
 	}
 	return rows
 }

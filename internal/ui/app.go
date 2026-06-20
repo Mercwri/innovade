@@ -321,7 +321,7 @@ func (m AppModel) handlePaletteAction(action palette.PaletteAction) (AppModel, t
 	case palette.ActionQuit:
 		return m, tea.Quit
 	case palette.ActionFilterLibrary:
-		m.library.OpenFilterPalette()
+		return m, m.library.OpenFilterPalette()
 	case palette.ActionImportCards:
 		return m, importCardsCmd(m.store)
 	}
