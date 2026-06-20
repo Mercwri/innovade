@@ -195,8 +195,8 @@ func buildFilterSummary(f models.CardFilter) string {
 			parts = append(parts, string(cat))
 		}
 	}
-	if f.SetCode != "" {
-		parts = append(parts, f.SetCode)
+	if len(f.SetCodes) > 0 {
+		parts = append(parts, strings.Join(f.SetCodes, ","))
 	}
 	if f.Type != "" {
 		parts = append(parts, f.Type)

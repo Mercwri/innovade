@@ -16,8 +16,8 @@ type CardFilter struct {
 	// Faction/archetype type — empty string means "any"
 	Type string
 
-	// Set filter — empty string means "any"
-	SetCode string
+	// Set filter — empty slice means "any" (all sets included)
+	SetCodes []string
 
 	// Stat range filters — nil pointer means "no bound"
 	MinCost  *int

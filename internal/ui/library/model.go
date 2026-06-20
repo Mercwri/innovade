@@ -412,7 +412,7 @@ func hasAnyFilter(f models.CardFilter) bool {
 	return f.Name != "" || len(f.Categories) > 0 || len(f.Colors) > 0 ||
 		f.FindPilots || len(f.PilotLinkNames) > 0 || len(f.PilotLinkTraits) > 0 ||
 		len(f.UnitLinkNames) > 0 || len(f.UnitLinkTraits) > 0 ||
-		f.SetCode != "" || f.Type != ""
+		len(f.SetCodes) > 0 || f.Type != ""
 }
 
 func (m Model) View() string {

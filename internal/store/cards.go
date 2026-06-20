@@ -117,9 +117,11 @@ func (s *Store) QueryCards(q models.CardQuery) ([]models.Card, error) {
 			args = append(args, string(loc))
 		}
 	}
-	if f.SetCode != "" {
-		conditions = append(conditions, "c.set_code = ?")
-		args = append(args, f.SetCode)
+	if len(f.SetCodes) > 0 {
+		conditions = append(conditions, "c.set_code IN ("+placeholders(len(f.SetCodes))+")")
+		for _, sc := range f.SetCodes {
+			args = append(args, sc)
+		}
 	}
 	if f.MinCost != nil {
 		conditions = append(conditions, "c.cost >= ?")
