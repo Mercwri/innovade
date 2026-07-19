@@ -152,6 +152,9 @@ func importDeckCmd(s *store.Store, path string) tea.Cmd {
 		if err != nil {
 			return importResultMsg{err: err}
 		}
+		if err := validateDeckAgainstLimitations(s, deck); err != nil {
+			return importResultMsg{err: err}
+		}
 		if err := s.SaveDeck(deck); err != nil {
 			return importResultMsg{err: fmt.Errorf("save: %w", err)}
 		}
@@ -251,11 +254,53 @@ func importDeckUrlCmd(s *store.Store, rawURL string) tea.Cmd {
 		if err != nil {
 			return importResultMsg{err: err}
 		}
+		if err := validateDeckAgainstLimitations(s, deck); err != nil {
+			return importResultMsg{err: err}
+		}
 		if err := s.SaveDeck(deck); err != nil {
 			return importResultMsg{err: fmt.Errorf("save: %w", err)}
 		}
 		return importResultMsg{deckName: deck.Name}
 	}
+}
+
+func validateDeckAgainstLimitations(s *store.Store, deck *models.Deck) error {
+	limitations, err := models.LoadLimitationsFromPath(filepath.Join("data", "bans.json"))
+	if err != nil || len(limitations) == 0 {
+		return nil
+	}
+
+	codes := make([]string, 0, len(deck.Entries))
+	seen := make(map[string]struct{}, len(deck.Entries))
+	for _, entry := range deck.Entries {
+		if entry.Quantity <= 0 {
+			continue
+		}
+		if _, ok := seen[entry.CardCode]; ok {
+			continue
+		}
+		seen[entry.CardCode] = struct{}{}
+		codes = append(codes, entry.CardCode)
+	}
+
+	cards := map[string]models.Card{}
+	if len(codes) > 0 {
+		loaded, loadErr := s.GetCardsByCodeMap(codes)
+		if loadErr == nil {
+			cards = loaded
+		}
+	}
+
+	result := models.ValidateDeck(limitations, deck, cards)
+	if result.Valid {
+		return nil
+	}
+
+	parts := make([]string, 0, len(result.Errors))
+	for _, err := range result.Errors {
+		parts = append(parts, err.Message)
+	}
+	return fmt.Errorf("deck violates current bans/restrictions: %s", strings.Join(parts, "; "))
 }
 
 func renderURLImportOverlay(input string, w, h int) string {

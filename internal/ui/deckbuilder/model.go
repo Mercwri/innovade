@@ -112,6 +112,11 @@ func New(s *store.Store) Model {
 
 func (m Model) Init() tea.Cmd { return m.loadDecks(true) }
 
+func (m *Model) SetStatus(status string, err bool) {
+	m.status = status
+	m.statusErr = err
+}
+
 func (m *Model) SetSize(w, h int) {
 	m.width = w
 	m.height = h
@@ -404,9 +409,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 // listVisibleRows: rows available in the left pane for deck name entries.
 // Fixed rows: title(1)+divider(1)+newDeck(1)+postNewDivider(1)+
-//             analysisDivider(1)+curveHeader(1)+curveRows(4)+totalsDivider(1)+totalsRow(1)+
-//             barRows(4)+barAxis(1)+
-//             hintDivider(1)+hints(2)+statusReserve(1) = 21
+//
+//	analysisDivider(1)+curveHeader(1)+curveRows(4)+totalsDivider(1)+totalsRow(1)+
+//	barRows(4)+barAxis(1)+
+//	hintDivider(1)+hints(2)+statusReserve(1) = 21
 func (m Model) listVisibleRows() int {
 	v := m.height - 21
 	if v < 0 {

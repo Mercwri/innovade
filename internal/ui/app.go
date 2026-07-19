@@ -62,7 +62,8 @@ type AppModel struct {
 	deckbuilder deckbuilder.Model
 	analysis    analysis.Model
 
-	activeDeck *models.Deck
+	activeDeck  *models.Deck
+	limitations []models.LimitationRule
 
 	paletteOpen bool
 	palette     palette.PaletteModel
@@ -75,17 +76,52 @@ func New(s *store.Store) (AppModel, error) {
 		return AppModel{}, err
 	}
 
+	limitations, err := models.LoadLimitationsFromPath(filepath.Join("data", "bans.json"))
+	if err != nil {
+		limitations = nil
+	}
+
 	return AppModel{
 		store:       s,
 		activeView:  ViewLibrary,
 		library:     lib,
 		deckbuilder: deckbuilder.New(s),
 		analysis:    analysis.New(s),
+		limitations: limitations,
 	}, nil
 }
 
 func (m AppModel) Init() tea.Cmd {
 	return tea.Batch(m.library.Init(), m.deckbuilder.Init())
+}
+
+func (m AppModel) validateDeck(deck *models.Deck) models.ValidationResult {
+	if len(m.limitations) == 0 {
+		return models.ValidationResult{Valid: true}
+	}
+
+	codes := make([]string, 0, len(deck.Entries))
+	seen := make(map[string]struct{}, len(deck.Entries))
+	for _, entry := range deck.Entries {
+		if entry.Quantity <= 0 {
+			continue
+		}
+		if _, ok := seen[entry.CardCode]; ok {
+			continue
+		}
+		seen[entry.CardCode] = struct{}{}
+		codes = append(codes, entry.CardCode)
+	}
+
+	cards := map[string]models.Card{}
+	if len(codes) > 0 {
+		loaded, err := m.store.GetCardsByCodeMap(codes)
+		if err == nil {
+			cards = loaded
+		}
+	}
+
+	return models.ValidateDeck(m.limitations, deck, cards)
 }
 
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -130,9 +166,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case library.AddToDeckMsg:
-		if m.activeDeck != nil && m.activeDeck.CardCount(msg.CardCode) < models.MaxCopiesPerCard {
+		if m.activeDeck != nil {
+			if m.activeDeck.CardCount(msg.CardCode) >= models.MaxCopiesPerCard {
+				m.deckbuilder.SetStatus("max copies already reached", true)
+				return m, nil
+			}
+
+			proposed := *m.activeDeck
+			proposed.AddCard(msg.CardCode)
+			if result := m.validateDeck(&proposed); !result.Valid {
+				m.deckbuilder.SetStatus("deck would violate current bans/restrictions", true)
+				return m, nil
+			}
+
 			isNew := m.activeDeck.CardCount(msg.CardCode) == 0
 			m.activeDeck.AddCard(msg.CardCode)
+			m.deckbuilder.SetStatus("", false)
 			if isNew {
 				m.library.SetActiveDeck(m.activeDeck) // new card → re-sort, cursor to top
 			} else {
@@ -145,6 +194,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activeDeck != nil {
 			willLeave := m.activeDeck.CardCount(msg.CardCode) <= 1
 			m.activeDeck.RemoveCard(msg.CardCode)
+			m.deckbuilder.SetStatus("", false)
 			if willLeave {
 				m.library.SetActiveDeck(m.activeDeck) // card gone → re-sort, cursor to top
 			} else {

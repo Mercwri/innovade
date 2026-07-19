@@ -1,0 +1,37 @@
+[
+    {
+        "type": "Restricted",
+        "cardId": "ST02-016",
+        "quantity": 2
+    },
+    {
+        "type": "Banned",
+        "cardId": "GD01-020"
+    },
+    {
+        "type": "Combination",
+        "cardIds" : [
+            "GD01-008",
+            "GD05-015"
+        ]
+    },
+    {
+        "type": "Combination",
+        "cardIds" : [
+            "ST01-010",
+            "ST05-010"
+        ]
+    },
+    {
+        "type": "Classification",
+        "stats" : {
+            "level":2,
+            "cost":1,
+            "ap":2,
+            "hp":2,
+            "effect": "",
+            "burst": "",
+            "linkRequirement" : ""
+        }
+    }
+]
