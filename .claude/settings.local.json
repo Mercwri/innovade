@@ -11,7 +11,23 @@
       "Bash(go vet *)",
       "Bash(gofmt -l internal/ui/deckbuilder/model.go)",
       "Bash(gofmt -d internal/ui/deckbuilder/model.go)",
-      "Bash(go test *)"
+      "Bash(go test *)",
+      "Bash(go run *)",
+      "Bash(tmux kill-session *)",
+      "Bash(tmux new-session *)",
+      "Bash(tmux capture-pane *)",
+      "Bash(tmux display *)",
+      "Read(//tmp/**)",
+      "Bash(grep -n \"INNOVADE\\\\|cards ·\\\\|cards$\\\\| cards \" /tmp/pane_full2.txt)",
+      "Bash(tmux send-keys *)",
+      "Bash(awk '{ print length, $0 }' /tmp/pane_deck3.txt)",
+      "Bash(rm -rf /home/mercwri/innovade/cmd/debugview /tmp/innovade-test /tmp/pane_*.txt /tmp/dbg*.txt *)",
+      "Bash(git -C /home/mercwri/innovade diff --stat)",
+      "Bash(git -C /home/mercwri/innovade diff internal/ui/keys/keys.go)",
+      "Bash(git -C /home/mercwri/innovade diff internal/ui/library/list.go)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
     ]
   }
 }

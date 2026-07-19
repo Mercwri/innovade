@@ -172,7 +172,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+			// Entries must be deep-copied: Deck.AddCard mutates an existing
+			// entry's Quantity in place, and a shallow struct copy still
+			// shares the same backing array, so validating here would
+			// silently bump the real deck's quantity before AddCard below
+			// bumps it again (1 press → +2).
 			proposed := *m.activeDeck
+			proposed.Entries = append([]models.DeckEntry(nil), m.activeDeck.Entries...)
 			proposed.AddCard(msg.CardCode)
 			if result := m.validateDeck(&proposed); !result.Valid {
 				m.deckbuilder.SetStatus("deck would violate current bans/restrictions", true)

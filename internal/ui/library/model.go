@@ -15,6 +15,14 @@ import (
 	"github.com/Mercwri/innovade/internal/ui/keys"
 )
 
+// PanelFocus indicates which panel has keyboard focus.
+type PanelFocus int
+
+const (
+	FocusLibrary PanelFocus = iota
+	FocusDeck
+)
+
 // Model is the card library Bubble Tea model.
 type Model struct {
 	store *store.Store
@@ -33,6 +41,9 @@ type Model struct {
 	width  int
 	height int
 
+	// Panel focus
+	panelFocus PanelFocus
+
 	// Filtering state
 	filtersActive     bool
 	filterPaletteOpen bool
@@ -43,10 +54,12 @@ type Model struct {
 	textInput     string
 
 	// Deck editing state
-	activeDeck *models.Deck
+	activeDeck      *models.Deck
+	deckEntryCursor int // selected deck entry index
+	deckEntryOffset int // first visible deck entry
 
 	// Art
-	imageDir      string          // local directory for cached card images
+	imageDir       string          // local directory for cached card images
 	downloadingArt map[string]bool // card codes currently being fetched
 
 	loaded bool
@@ -110,8 +123,11 @@ func (m *Model) SetError(err error) {
 func (m *Model) SetSize(w, h int) {
 	m.width = w
 	m.height = h
+	// Left panel: 45% width
+	m.listW = w * 45 / 100
+	// Right panel will be w - m.listW
+	// The list height still uses the full height for card library
 	m.listH = h
-	m.listW = w * 55 / 100
 }
 
 // SetActiveDeck updates the deck being edited in the library view and
@@ -212,50 +228,95 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 
-		// Deck add/remove — only when a deck is active
-		if m.activeDeck != nil && m.selected != nil {
-			switch {
-			case key.Matches(msg, keys.Library.AddToDeck):
-				code := m.selected.CardCode
-				return m, func() tea.Msg { return AddToDeckMsg{CardCode: code} }
-			case key.Matches(msg, keys.Library.RemoveFromDeck):
-				code := m.selected.CardCode
-				return m, func() tea.Msg { return RemoveFromDeckMsg{CardCode: code} }
-			}
-		}
-
 		switch {
-		case key.Matches(msg, keys.Library.Up):
+		case key.Matches(msg, keys.Library.Left):
+			m.panelFocus = FocusLibrary
+		case key.Matches(msg, keys.Library.Right):
+			if m.activeDeck != nil {
+				m.panelFocus = FocusDeck
+				cmds = append(cmds, m.syncSelectionToDeckEntry())
+			}
+
+		// When library is focused: normal card navigation
+		case m.panelFocus == FocusLibrary && key.Matches(msg, keys.Library.Up):
 			cmds = append(cmds, m.moveCursor(-1))
-		case key.Matches(msg, keys.Library.Down):
+		case m.panelFocus == FocusLibrary && key.Matches(msg, keys.Library.Down):
 			cmds = append(cmds, m.moveCursor(1))
+
+		// When deck is focused: scroll through deck entries — the library
+		// selection (and thus the detail view) follows the deck cursor so
+		// add/remove below always target whatever entry is highlighted.
+		case m.panelFocus == FocusDeck && key.Matches(msg, keys.Library.Up):
+			m.moveDeckCursor(-1)
+			cmds = append(cmds, m.syncSelectionToDeckEntry())
+		case m.panelFocus == FocusDeck && key.Matches(msg, keys.Library.Down):
+			m.moveDeckCursor(1)
+			cmds = append(cmds, m.syncSelectionToDeckEntry())
+
+		// Top/Bottom apply to current focus context
 		case key.Matches(msg, keys.Library.Top):
-			m.cursor = 0
-			m.offset = 0
-			cmds = append(cmds, m.updateSelected())
+			if m.panelFocus == FocusDeck {
+				m.deckEntryCursor = 0
+				m.deckEntryOffset = 0
+				cmds = append(cmds, m.syncSelectionToDeckEntry())
+			} else {
+				m.cursor = 0
+				m.offset = 0
+				cmds = append(cmds, m.updateSelected())
+			}
 		case key.Matches(msg, keys.Library.Bottom):
-			m.cursor = len(m.cards) - 1
-			m.scrollToSelected()
-			cmds = append(cmds, m.updateSelected())
+			if m.panelFocus == FocusDeck && m.activeDeck != nil {
+				m.deckEntryCursor = len(m.activeDeck.Entries) - 1
+				m.scrollDeckToSelected()
+				cmds = append(cmds, m.syncSelectionToDeckEntry())
+			} else {
+				m.cursor = len(m.cards) - 1
+				m.scrollToSelected()
+				cmds = append(cmds, m.updateSelected())
+			}
+
+		// PageUp/PageDown apply to current focus context
 		case key.Matches(msg, keys.Library.PageUp):
-			cmds = append(cmds, m.moveCursor(-m.visibleRows()))
+			if m.panelFocus == FocusDeck {
+				m.moveDeckCursor(-m.visibleDeckRows())
+				cmds = append(cmds, m.syncSelectionToDeckEntry())
+			} else {
+				cmds = append(cmds, m.moveCursor(-m.visibleRows()))
+			}
 		case key.Matches(msg, keys.Library.PageDown):
-			cmds = append(cmds, m.moveCursor(m.visibleRows()))
-		case key.Matches(msg, keys.Library.FindLinks):
+			if m.panelFocus == FocusDeck {
+				m.moveDeckCursor(m.visibleDeckRows())
+				cmds = append(cmds, m.syncSelectionToDeckEntry())
+			} else {
+				cmds = append(cmds, m.moveCursor(m.visibleRows()))
+			}
+
+		// Add/Remove always act on m.selected, which — thanks to the sync
+		// above — is the deck entry under the cursor when the deck panel
+		// has focus, or the highlighted library card otherwise.
+		case m.activeDeck != nil && m.selected != nil && key.Matches(msg, keys.Library.AddToDeck):
+			code := m.selected.CardCode
+			return m, func() tea.Msg { return AddToDeckMsg{CardCode: code} }
+		case m.activeDeck != nil && m.selected != nil && key.Matches(msg, keys.Library.RemoveFromDeck):
+			code := m.selected.CardCode
+			return m, func() tea.Msg { return RemoveFromDeckMsg{CardCode: code} }
+
+		// Other bindings (only work when library is focused)
+		case m.panelFocus == FocusLibrary && key.Matches(msg, keys.Library.FindLinks):
 			if m.selected != nil {
 				if f, ok := buildLinkFilter(m.selected); ok {
 					return m, func() tea.Msg { return FilterAppliedMsg{Filter: f} }
 				}
 			}
-		case key.Matches(msg, keys.Library.ClearFilters):
+		case m.panelFocus == FocusLibrary && key.Matches(msg, keys.Library.ClearFilters):
 			m.filter = models.CardFilter{}
 			m.filtersActive = true
 			m.cursor = 0
 			m.offset = 0
 			return m, m.loadCards()
-		case key.Matches(msg, keys.Library.OpenFilter):
+		case m.panelFocus == FocusLibrary && key.Matches(msg, keys.Library.OpenFilter):
 			cmds = append(cmds, m.OpenFilterPalette())
-		case key.Matches(msg, keys.Library.TextFilter):
+		case m.panelFocus == FocusLibrary && key.Matches(msg, keys.Library.TextFilter):
 			m.textInputOpen = true
 			m.textInput = m.filter.Name
 		}
@@ -355,9 +416,15 @@ func (m *Model) moveCursor(delta int) tea.Cmd {
 }
 
 // visibleRows returns the number of card rows that fit in the list area,
-// reserving space for the 3 fixed header rows and 1 scroll-hint row.
+// reserving space for the 3 fixed header rows and 1 scroll-hint row, plus
+// the top/bottom border rows drawn around the panel when it has focus
+// (renderLayout wraps it in a DoubleBorder, which adds 2 rows on top of
+// its content — without this the panel overflows its height budget).
 func (m Model) visibleRows() int {
 	v := m.listH - 4
+	if m.panelFocus == FocusLibrary {
+		v -= 2
+	}
 	if v < 0 {
 		return 0
 	}
@@ -383,6 +450,62 @@ func (m *Model) updateSelected() tea.Cmd {
 	}
 	m.selected = &m.cards[m.cursor]
 	return m.maybeDownloadArt(m.selected)
+}
+
+// moveDeckCursor moves the deck entry cursor by delta, clamping to valid range
+func (m *Model) moveDeckCursor(delta int) {
+	if m.activeDeck == nil || len(m.activeDeck.Entries) == 0 {
+		return
+	}
+	m.deckEntryCursor += delta
+	if m.deckEntryCursor < 0 {
+		m.deckEntryCursor = 0
+	}
+	if m.deckEntryCursor >= len(m.activeDeck.Entries) {
+		m.deckEntryCursor = len(m.activeDeck.Entries) - 1
+	}
+	m.scrollDeckToSelected()
+}
+
+// syncSelectionToDeckEntry moves the library cursor (and thus m.selected /
+// the detail view) to whichever card is highlighted in the deck panel, so
+// that add/remove — which always act on m.selected — target the entry the
+// user is actually looking at while the deck panel has focus.
+func (m *Model) syncSelectionToDeckEntry() tea.Cmd {
+	if m.activeDeck == nil || m.deckEntryCursor < 0 || m.deckEntryCursor >= len(m.activeDeck.Entries) {
+		return nil
+	}
+	code := m.activeDeck.Entries[m.deckEntryCursor].CardCode
+	for i, c := range m.cards {
+		if c.CardCode == code {
+			m.cursor = i
+			m.scrollToSelected()
+			return m.updateSelected()
+		}
+	}
+	return nil
+}
+
+// scrollDeckToSelected ensures the deck cursor is visible
+func (m *Model) scrollDeckToSelected() {
+	vr := m.visibleDeckRows()
+	if m.deckEntryCursor < m.deckEntryOffset {
+		m.deckEntryOffset = m.deckEntryCursor
+	}
+	if m.deckEntryCursor >= m.deckEntryOffset+vr {
+		m.deckEntryOffset = m.deckEntryCursor - vr + 1
+	}
+}
+
+// visibleDeckRows returns the number of deck entries that fit in the deck panel
+func (m Model) visibleDeckRows() int {
+	deckH := m.height * 45 / 100
+	// Reserve space for header (2 lines) and leave room
+	v := deckH - 3
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 // maybeDownloadArt returns a Cmd that downloads the card's default image if it
@@ -446,15 +569,6 @@ func (m Model) View() string {
 		return "No cards imported yet.\n\nPress [?] to open the palette and import cards."
 	}
 
-	var imagePath string
-	if m.selected != nil && m.selected.DefaultImagePath != "" && m.imageDir != "" {
-		imagePath = filepath.Join(m.imageDir, m.selected.DefaultImagePath)
-	}
-
-	detailW := m.width - m.listW
-	list := renderList(m)
-	detail := renderDetail(m.selected, detailW, m.height, imagePath)
-
 	if m.textInputOpen {
 		return renderWithTextInput(m.textInput, m.width, m.height)
 	}
@@ -462,5 +576,31 @@ func (m Model) View() string {
 		return renderWithFilterPalette(m.filterPalette.View(), m.width, m.height)
 	}
 
-	return renderLayout(list, detail, m.listW, m.width, m.height)
+	var imagePath string
+	if m.selected != nil && m.selected.DefaultImagePath != "" && m.imageDir != "" {
+		imagePath = filepath.Join(m.imageDir, m.selected.DefaultImagePath)
+	}
+
+	// The deck panel gets a DoubleBorder (2 extra rows) when it has focus;
+	// shrink its content budget to match or the border pushes the total
+	// render past the terminal height (see visibleRows for the same issue
+	// on the list panel).
+	deckBudgetH := m.height * 45 / 100
+	if m.panelFocus == FocusDeck {
+		deckBudgetH -= 2
+	}
+
+	// Card names for the deck panel — sourced from the currently loaded card
+	// list rather than a separate cache, since that's the same data set
+	// syncSelectionToDeckEntry relies on to find deck entries by code.
+	cardNames := make(map[string]string, len(m.cards))
+	for _, c := range m.cards {
+		cardNames[c.CardCode] = c.Name
+	}
+
+	list := renderList(m)
+	detail := renderDetail(m.selected, m.width-m.listW, m.height*55/100, imagePath)
+	deckList := renderDeckPanel(m.activeDeck, m.width-m.listW, deckBudgetH, m.deckEntryCursor, m.deckEntryOffset, cardNames)
+
+	return renderLayout(list, detail, deckList, m.listW, m.width, m.height, m.panelFocus, m.activeDeck != nil)
 }

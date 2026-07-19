@@ -36,7 +36,10 @@ func renderList(m Model) string {
 	// Column headers
 	sb.WriteString(renderColumnHeaders(m.activeDeck != nil))
 	sb.WriteString("\n")
-	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", m.listW)))
+	// listW-2: matches the box's content width in renderLayout (2 columns
+	// are always reserved for the border), otherwise this full-width line
+	// is wider than the box and lipgloss wraps it onto an extra row.
+	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", m.listW-2)))
 	sb.WriteString("\n")
 
 	// Visible rows — visibleRows() already reserves the hint row so the
@@ -55,21 +58,31 @@ func renderList(m Model) string {
 	}
 
 	// Help/scroll hint — always rendered (space is reserved by visibleRows).
+	// Hints change based on panel focus
 	var hint string
-	if len(m.cards) > vr {
-		pct := 0
-		if len(m.cards) > 0 {
-			pct = (m.cursor + 1) * 100 / len(m.cards)
-		}
-		hint = fmt.Sprintf("%d%% ↑↓/jk · g/G top/btm", pct)
+	if m.panelFocus == FocusDeck && m.activeDeck != nil {
+		// Deck panel has focus
+		hint = "↑↓/jk · enter remove · del remove · → back to library · ← focus library"
 	} else {
-		hint = "↑↓/jk navigate · g/G top/bottom"
+		// Library panel has focus (default)
+		if len(m.cards) > vr {
+			pct := 0
+			if len(m.cards) > 0 {
+				pct = (m.cursor + 1) * 100 / len(m.cards)
+			}
+			hint = fmt.Sprintf("%d%% ↑↓/jk · g/G top/btm", pct)
+		} else {
+			hint = "↑↓/jk navigate · g/G top/bottom"
+		}
+		hint += " · t search · f filter · c clear · l links"
+		if m.activeDeck != nil {
+			hint += " · enter add · del remove · → deck"
+		}
 	}
-	hint += " · t search · f filter · c clear · l links"
-	if m.activeDeck != nil {
-		hint += " · enter add · del remove"
-	}
-	sb.WriteString(styles.StyleContentHint.Render(hint))
+	// Truncate to the box's content width — an unbounded line here wraps
+	// inside the bordered panel, adding a row nothing else budgets for and
+	// pushing content (including the app header) off the top of the screen.
+	sb.WriteString(styles.StyleContentHint.Render(truncate(hint, m.listW-2)))
 
 	return sb.String()
 }
@@ -136,21 +149,124 @@ func formatColor(card models.Card) string {
 	return styles.CardColorSwatch(c) + " " + c
 }
 
-func renderLayout(list, detail string, listW, w, h int) string {
+func renderLayout(list, detail, deckPanel string, listW, w, h int, focus PanelFocus, deckActive bool) string {
 	detailW := w - listW
 
-	listBox := lipgloss.NewStyle().
-		Background(styles.BgBase).
-		Height(h).
-		Width(listW).
-		Render(list)
+	// Left panel: card library.
+	// DoubleBorder adds 1 column on each side on top of Width(), so content
+	// is always built 2 columns narrower than listW (see the divider in
+	// renderList) — otherwise the left+right panes together overflow the
+	// terminal width and every row wraps. The reservation is unconditional
+	// so the panel doesn't change width when focus toggles the border.
+	var listBox lipgloss.Style
+	if focus == FocusLibrary {
+		listBox = lipgloss.NewStyle().
+			Background(styles.BgBase).
+			BorderStyle(lipgloss.DoubleBorder()).
+			Width(listW - 2)
+	} else {
+		listBox = lipgloss.NewStyle().
+			Background(styles.BgBase).
+			Width(listW - 2)
+	}
+	listRendered := listBox.Render(list)
 
-	detailBox := lipgloss.NewStyle().
-		Height(h).
-		Width(detailW).
-		Render(detail)
+	// Right panel
+	if deckActive {
+		// Two-panel layout (detail top, deck bottom)
+		detailH := h * 55 / 100
+		if detailH < 3 {
+			detailH = 3
+		}
+		deckH := h - detailH
+		if deckH < 3 {
+			deckH = 3
+			detailH = h - deckH
+		}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, listBox, detailBox)
+		// Render with height constraints
+		detailRendered := lipgloss.NewStyle().Width(detailW).Render(detail)
+		
+		var deckRendered string
+		if focus == FocusDeck {
+			// Same border-width compensation as the list panel above.
+			deckRendered = lipgloss.NewStyle().
+				BorderStyle(lipgloss.DoubleBorder()).
+				Width(detailW - 2).
+				Render(deckPanel)
+		} else {
+			deckRendered = lipgloss.NewStyle().Width(detailW).Render(deckPanel)
+		}
+
+		rightPanel := lipgloss.JoinVertical(lipgloss.Top, detailRendered, deckRendered)
+		return lipgloss.JoinHorizontal(lipgloss.Top, listRendered, rightPanel)
+	}
+
+	// Single-panel layout (detail only)
+	detailRendered := lipgloss.NewStyle().Width(detailW).Render(detail)
+	return lipgloss.JoinHorizontal(lipgloss.Top, listRendered, detailRendered)
+}
+
+func renderDeckPanel(deck *models.Deck, width, height int, cursor int, offset int, cardNames map[string]string) string {
+	if deck == nil {
+		return styles.StyleDetailPanel.Width(width - 1).Height(height).Render(
+			styles.StyleDetailLabel.Render("No deck selected"),
+		)
+	}
+
+	var sb strings.Builder
+
+	// Title
+	sb.WriteString(styles.StyleDetailTitle.Render(truncate(deck.Name, width-3)))
+	sb.WriteString("\n")
+	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", width-3)))
+	sb.WriteString("\n")
+
+	if len(deck.Entries) == 0 {
+		sb.WriteString(styles.StyleDetailLabel.Render("(empty)"))
+		return sb.String()
+	}
+
+	// Column headers
+	const codeW, qtyW = 9, 4
+	nameW := width - codeW - qtyW - 2
+	if nameW < 1 {
+		nameW = 1
+	}
+
+	sb.WriteString(styles.StyleColumnHeader.Width(codeW).Render("Code"))
+	sb.WriteString(styles.StyleColumnHeader.Width(nameW).Render("Name"))
+	sb.WriteString(styles.StyleColumnHeader.Width(qtyW).Align(lipgloss.Right).Render("Qty"))
+	sb.WriteString("\n")
+
+	// Entries (limited to visible height)
+	// Reserve space for title (1), divider (1), headers (1), totaling 3 lines
+	vr := height - 3
+	if vr < 1 {
+		vr = 1
+	}
+	end := offset + vr
+	if end > len(deck.Entries) {
+		end = len(deck.Entries)
+	}
+	for i := offset; i < end; i++ {
+		e := deck.Entries[i]
+		rowStyle := styles.StyleRowNormal
+		if i == cursor {
+			rowStyle = styles.StyleRowSelected
+		}
+		displayName := e.CardCode
+		if n, ok := cardNames[e.CardCode]; ok && n != "" {
+			displayName = n
+		}
+		code := rowStyle.Width(codeW).Render(e.CardCode)
+		name := rowStyle.Width(nameW).Render(truncate(displayName, nameW-1))
+		qty := rowStyle.Width(qtyW).Align(lipgloss.Right).Render(fmt.Sprintf("×%d", e.Quantity))
+		sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, code, name, qty))
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
 }
 
 func renderWithTextInput(input string, w, h int) string {
