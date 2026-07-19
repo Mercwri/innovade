@@ -186,7 +186,7 @@ func renderLayout(list, detail, deckPanel string, listW, w, h int, focus PanelFo
 
 		// Render with height constraints
 		detailRendered := lipgloss.NewStyle().Width(detailW).Render(detail)
-		
+
 		var deckRendered string
 		if focus == FocusDeck {
 			// Same border-width compensation as the list panel above.
