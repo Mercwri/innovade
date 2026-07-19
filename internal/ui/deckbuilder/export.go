@@ -31,6 +31,7 @@ const (
 	exportActionFile
 	exportActionClipboard
 	exportActionMSALink
+	exportActionImage
 )
 
 var exportOptions = []struct {
@@ -40,6 +41,7 @@ var exportOptions = []struct {
 	{"Save to .txt file", exportActionFile},
 	{"Copy decklist to clipboard", exportActionClipboard},
 	{"Copy MSA link to clipboard", exportActionMSALink},
+	{"Save as PNG image", exportActionImage},
 }
 
 // ExportPalette is the overlay for choosing an export format.

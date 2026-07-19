@@ -299,11 +299,14 @@ func (m Model) renderGrid() string {
 	return sb.String()
 }
 
-// renderBursts shows burst card count and hypergeometric shield probability.
+// renderBursts shows burst card count and the cumulative hypergeometric
+// probability of drawing at least m burst cards among all 6 shields, for
+// every threshold m from 1 to 6.
 func (m Model) renderBursts() string {
+	const shieldCount = 6
+
 	K := m.bursts
 	N := models.DeckMaxSize
-	prob := shieldProb(N, K, 6)
 
 	var sb strings.Builder
 	sb.WriteString(styles.StyleDetailTitle.Render("Burst"))
@@ -312,10 +315,14 @@ func (m Model) renderBursts() string {
 		fmt.Sprintf("Cards with burst:  %d / %d", K, N),
 	))
 	sb.WriteString("\n")
-	sb.WriteString(styles.StyleDetailValue.Render(
-		fmt.Sprintf("P(≥1 in shields):  %.1f%%", prob*100),
-	))
-	sb.WriteString("\n")
+
+	for m := 1; m <= shieldCount; m++ {
+		prob := shieldProbAtLeast(N, K, shieldCount, m)
+		sb.WriteString(styles.StyleDetailValue.Render(
+			fmt.Sprintf("P(≥%d in shields):  %5.1f%%", m, prob*100),
+		))
+		sb.WriteString("\n")
+	}
 	return sb.String()
 }
 
@@ -507,24 +514,53 @@ func countBursts(deck *models.Deck, cards map[string]models.Card) int {
 	return count
 }
 
-// shieldProb returns P(≥1 burst card in s shields drawn from a deck of N cards
-// with K burst cards) using the hypergeometric complement:
-// 1 - ∏_{i=0}^{s-1} (N-K-i)/(N-i)
-func shieldProb(N, K, s int) float64 {
+// shieldProbAtLeast returns P(X≥m) where X is the number of burst cards drawn
+// among s shields, from a deck of N cards containing K burst cards, using the
+// hypergeometric distribution.
+func shieldProbAtLeast(N, K, s, m int) float64 {
 	if K <= 0 || N <= 0 {
 		return 0
 	}
 	if K >= N {
 		return 1
 	}
-	p := 1.0
-	for i := 0; i < s; i++ {
-		if N-i <= 0 || N-K-i < 0 {
-			break
-		}
-		p *= float64(N-K-i) / float64(N-i)
+	sum := 0.0
+	for k := 0; k < m; k++ {
+		sum += hyperGeomPMF(N, K, s, k)
 	}
-	return 1 - p
+	p := 1 - sum
+	if p < 0 {
+		return 0
+	}
+	if p > 1 {
+		return 1
+	}
+	return p
+}
+
+// hyperGeomPMF returns P(X=k) for X ~ Hypergeometric(N, K, s): the probability
+// of drawing exactly k successes in s draws without replacement from a
+// population of N containing K successes.
+func hyperGeomPMF(N, K, s, k int) float64 {
+	if k < 0 || k > s || k > K || s-k > N-K {
+		return 0
+	}
+	return comb(K, k) * comb(N-K, s-k) / comb(N, s)
+}
+
+// comb returns the binomial coefficient C(n, k) as a float64.
+func comb(n, k int) float64 {
+	if k < 0 || k > n {
+		return 0
+	}
+	if k > n-k {
+		k = n - k
+	}
+	result := 1.0
+	for i := 0; i < k; i++ {
+		result *= float64(n-i) / float64(i+1)
+	}
+	return result
 }
 
 // drawHand builds the full deck pool (each card repeated by quantity), shuffles

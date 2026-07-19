@@ -2,3 +2,5 @@ main.exe
 .claude/**
 innovade
 innovade.exe
+*.txt
+*png

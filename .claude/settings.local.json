@@ -3,7 +3,15 @@
     "allow": [
       "PowerShell($json = Get-Content C:\\\\Users\\\\Michael\\\\innovade\\\\data\\\\cards.json -Raw | ConvertFrom-Json; $json | Where-Object { $_.card_code -eq 'GD01-007' } | ConvertTo-Json -Depth 5)",
       "Bash(node)",
-      "Bash(go build *)"
+      "Bash(go build *)",
+      "Bash(go list *)",
+      "Read(//home/mercwri/go/pkg/mod/golang.org/x/image@v0.40.0/font/gofont/goregular/**)",
+      "Read(//home/mercwri/go/pkg/mod/golang.org/x/image@v0.40.0/font/opentype/**)",
+      "Read(//home/mercwri/go/pkg/mod/golang.org/x/image@v0.40.0/draw/**)",
+      "Bash(go vet *)",
+      "Bash(gofmt -l internal/ui/deckbuilder/model.go)",
+      "Bash(gofmt -d internal/ui/deckbuilder/model.go)",
+      "Bash(go test *)"
     ]
   }
 }

@@ -2,6 +2,7 @@ package deckbuilder
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -22,6 +23,7 @@ var dbKeys = struct {
 	Export     key.Binding
 	Import     key.Binding
 	Rename     key.Binding
+	Clone      key.Binding
 	ScrollUp   key.Binding
 	ScrollDown key.Binding
 }{
@@ -33,6 +35,7 @@ var dbKeys = struct {
 	Export:     key.NewBinding(key.WithKeys("e")),
 	Import:     key.NewBinding(key.WithKeys("i")),
 	Rename:     key.NewBinding(key.WithKeys("r")),
+	Clone:      key.NewBinding(key.WithKeys("c")),
 	ScrollUp:   key.NewBinding(key.WithKeys("pgup", "ctrl+u")),
 	ScrollDown: key.NewBinding(key.WithKeys("pgdown", "ctrl+d")),
 }
@@ -56,6 +59,12 @@ type decksLoadedMsg struct {
 type renameResultMsg struct {
 	id   string
 	name string
+	err  error
+}
+
+// deckClonedMsg is sent after a deck copy has been saved to the store.
+type deckClonedMsg struct {
+	deck models.Deck
 	err  error
 }
 
@@ -89,10 +98,16 @@ type Model struct {
 
 	exportOpen    bool
 	exportPalette ExportPalette
+
+	imageDir string // local directory for cached card images, used by PNG export
 }
 
 func New(s *store.Store) Model {
-	return Model{store: s, cardStats: map[string]store.CardStat{}}
+	m := Model{store: s, cardStats: map[string]store.CardStat{}}
+	if dir, err := store.DataDir(); err == nil {
+		m.imageDir = filepath.Join(dir, "images")
+	}
+	return m
 }
 
 func (m Model) Init() tea.Cmd { return m.loadDecks(true) }
@@ -173,6 +188,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.status = "Renamed → " + msg.name
 			m.statusErr = false
 		}
+		return m, nil
+
+	case deckClonedMsg:
+		if msg.err != nil {
+			m.status = "clone failed: " + msg.err.Error()
+			m.statusErr = true
+			return m, nil
+		}
+		m.decks = append([]models.Deck{msg.deck}, m.decks...)
+		m.cursor = 1 // +1: cursor 0 = ★ New Deck
+		m.listOffset = 0
+		m.entryOffset = 0
+		m.renaming = true
+		m.renameInput = msg.deck.Name
+		m.status = ""
 		return m, nil
 
 	case exportResultMsg:
@@ -256,6 +286,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.exportOpen = false
 				d := m.decks[m.cursor-1]
 				return m, copyToClipboardCmd(formatMSALink(&d), "MSA link copied to clipboard")
+			case exportActionImage:
+				m.exportOpen = false
+				d := m.decks[m.cursor-1]
+				return m, exportImageCmd(d, m.store, m.imageDir)
 			}
 			return m, nil
 		}
@@ -333,6 +367,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.cursor > 0 {
 				m.renaming = true
 				m.renameInput = m.decks[m.cursor-1].Name
+			}
+		case key.Matches(msg, dbKeys.Clone):
+			if m.cursor > 0 {
+				return m, m.cloneDeckCmd(m.decks[m.cursor-1])
 			}
 		case key.Matches(msg, dbKeys.New):
 			d := &models.Deck{Name: "no name"}
@@ -488,7 +526,7 @@ func (m Model) renderLeft(w int) string {
 	sb.WriteString("\n")
 	sb.WriteString(styles.StyleContentHint.Render("↑↓ nav · enter activate · n new · x del"))
 	sb.WriteString("\n")
-	sb.WriteString(styles.StyleContentHint.Render("r rename · e export · i import · PgDn/PgUp scroll →"))
+	sb.WriteString(styles.StyleContentHint.Render("r rename · c clone · e export · i import · PgDn/PgUp scroll →"))
 
 	if m.status != "" {
 		sb.WriteString("\n")
@@ -817,6 +855,23 @@ func (m Model) deleteDeckCmd(id string) tea.Cmd {
 	return func() tea.Msg {
 		_ = s.DeleteDeck(id)
 		return DeckDeletedMsg{ID: id}
+	}
+}
+
+// cloneDeckCmd saves a copy of d as a brand new deck (fresh ID, "(copy)"
+// suffix) so the caller can immediately rename it into a deck variation.
+func (m Model) cloneDeckCmd(d models.Deck) tea.Cmd {
+	s := m.store
+	return func() tea.Msg {
+		clone := models.Deck{
+			Name:        d.Name + " (copy)",
+			Description: d.Description,
+			Entries:     append([]models.DeckEntry(nil), d.Entries...),
+		}
+		if err := s.SaveDeck(&clone); err != nil {
+			return deckClonedMsg{err: err}
+		}
+		return deckClonedMsg{deck: clone}
 	}
 }
 

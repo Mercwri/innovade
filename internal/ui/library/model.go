@@ -403,7 +403,7 @@ func (m *Model) maybeDownloadArt(card *models.Card) tea.Cmd {
 	cardCode := card.CardCode
 	filename := card.DefaultImagePath
 	return func() tea.Msg {
-		_ = downloadArt(localPath, filename) // failure is silent; placeholder shows instead
+		_ = DownloadArt(localPath, filename) // failure is silent; placeholder shows instead
 		return ImageReadyMsg{CardCode: cardCode}
 	}
 }

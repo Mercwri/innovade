@@ -7,17 +7,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/Mercwri/innovade/internal/ui/styles"
+	"github.com/charmbracelet/lipgloss"
 )
 
-const artBaseURL = "https://www.gundam-gcg.com/en/images/cards/card/"
+// ArtBaseURL is the official card image CDN, exported so other packages
+// (e.g. the deckbuilder's PNG export) can fetch missing art without
+// duplicating the HTTP/caching logic here.
+
+const ArtBaseURL = "https://www.gundam-gcg.com/en/images/cards/card/"
 
 // artDims computes the character dimensions of the art frame.
 //
@@ -114,22 +119,38 @@ func artPlaceholder(charW, charH int) string {
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(styles.ColorBorder).
-		Width(charW - 2).
-		Height(charH - 2).
+		Width(charW-2).
+		Height(charH-2).
 		Align(lipgloss.Center, lipgloss.Center).
 		Background(styles.BgBase).
 		Foreground(styles.ColorBorder).
 		Render("no image")
 }
 
-// downloadArt fetches filename from the official card image CDN and writes it
+// revisionSuffix strips the "-r<timestamp>" cache-busting suffix that some
+// imported card records carry (e.g. "GD05-111-r1783690232899.webp") — the CDN
+// itself only ever hosts the unsuffixed name.
+var revisionSuffix = regexp.MustCompile(`-r\d+$`)
+
+// upstreamFilename maps a locally recorded image filename to the name the CDN
+// actually serves. Besides the revision suffix above, a handful of entries
+// (e.g. token cards) record a stale ".png" extension even though the CDN only
+// hosts ".webp" for every card image; image.Decode sniffs content rather than
+// relying on the on-disk extension, so normalizing here is safe.
+func upstreamFilename(filename string) string {
+	base := strings.TrimSuffix(filename, filepath.Ext(filename))
+	base = revisionSuffix.ReplaceAllString(base, "")
+	return base + ".webp"
+}
+
+// DownloadArt fetches filename from the official card image CDN and writes it
 // atomically to localPath. The images directory is created if needed.
-func downloadArt(localPath, filename string) error {
+func DownloadArt(localPath, filename string) error {
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 		return err
 	}
 
-	resp, err := http.Get(artBaseURL + filename)
+	resp, err := http.Get(ArtBaseURL + upstreamFilename(filename))
 	if err != nil {
 		return err
 	}
