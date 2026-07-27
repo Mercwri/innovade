@@ -141,6 +141,18 @@ var (
 	StyleRarityLR = lipgloss.NewStyle().Background(BgBase).Foreground(lipgloss.Color("#FCD34D")).Bold(true)
 )
 
+// FocusBorderColor returns the border color for a panel whose border is
+// always reserved in the layout but only meant to read as "visible" when
+// the panel has keyboard focus. Unfocused panels get a border colored the
+// same as the panel background so it blends in instead of disappearing —
+// keeping the panel's rendered size constant when focus toggles.
+func FocusBorderColor(focused bool) lipgloss.Color {
+	if focused {
+		return colorAccent
+	}
+	return BgBase
+}
+
 // RarityStyle returns the appropriate style for a rarity string.
 func RarityStyle(rarity string) lipgloss.Style {
 	switch rarity {

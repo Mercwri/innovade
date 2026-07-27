@@ -149,54 +149,37 @@ func formatColor(card models.Card) string {
 	return styles.CardColorSwatch(c) + " " + c
 }
 
-func renderLayout(list, detail, deckPanel string, listW, w, h int, focus PanelFocus, deckActive bool) string {
+func renderLayout(list, detail, deckPanel string, listW, w, h int, focus PanelFocus, deckActive bool, topH, bottomH int) string {
 	detailW := w - listW
 
 	// Left panel: card library.
 	// DoubleBorder adds 1 column on each side on top of Width(), so content
 	// is always built 2 columns narrower than listW (see the divider in
 	// renderList) — otherwise the left+right panes together overflow the
-	// terminal width and every row wraps. The reservation is unconditional
-	// so the panel doesn't change width when focus toggles the border.
-	var listBox lipgloss.Style
-	if focus == FocusLibrary {
-		listBox = lipgloss.NewStyle().
-			Background(styles.BgBase).
-			BorderStyle(lipgloss.DoubleBorder()).
-			Width(listW - 2)
-	} else {
-		listBox = lipgloss.NewStyle().
-			Background(styles.BgBase).
-			Width(listW - 2)
-	}
+	// terminal width and every row wraps. The border itself is always
+	// rendered (via FocusBorderColor, invisible when unfocused) so the
+	// panel's rendered size never changes when focus toggles.
+	listBox := lipgloss.NewStyle().
+		Background(styles.BgBase).
+		BorderStyle(lipgloss.DoubleBorder()).
+		BorderForeground(styles.FocusBorderColor(focus == FocusLibrary)).
+		Width(listW - 2)
 	listRendered := listBox.Render(list)
 
 	// Right panel
 	if deckActive {
-		// Two-panel layout (detail top, deck bottom)
-		detailH := h * 55 / 100
-		if detailH < 3 {
-			detailH = 3
-		}
-		deckH := h - detailH
-		if deckH < 3 {
-			deckH = 3
-			detailH = h - deckH
-		}
+		// Two-panel layout (detail top, deck bottom), forced to the fixed
+		// topH/bottomH split from the caller so the divide never shifts
+		// with content length or focus.
+		detailRendered := lipgloss.NewStyle().Width(detailW).Height(topH).Render(detail)
 
-		// Render with height constraints
-		detailRendered := lipgloss.NewStyle().Width(detailW).Render(detail)
-
-		var deckRendered string
-		if focus == FocusDeck {
-			// Same border-width compensation as the list panel above.
-			deckRendered = lipgloss.NewStyle().
-				BorderStyle(lipgloss.DoubleBorder()).
-				Width(detailW - 2).
-				Render(deckPanel)
-		} else {
-			deckRendered = lipgloss.NewStyle().Width(detailW).Render(deckPanel)
-		}
+		// Same always-reserved border as the list panel above.
+		deckRendered := lipgloss.NewStyle().
+			BorderStyle(lipgloss.DoubleBorder()).
+			BorderForeground(styles.FocusBorderColor(focus == FocusDeck)).
+			Width(detailW - 2).
+			Height(bottomH - 2).
+			Render(deckPanel)
 
 		rightPanel := lipgloss.JoinVertical(lipgloss.Top, detailRendered, deckRendered)
 		return lipgloss.JoinHorizontal(lipgloss.Top, listRendered, rightPanel)

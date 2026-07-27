@@ -51,8 +51,8 @@ var Library = LibraryKeys{
 		key.WithHelp("←/h", "focus library"),
 	),
 	Right: key.NewBinding(
-		key.WithKeys("right", "l"),
-		key.WithHelp("→/l", "focus deck"),
+		key.WithKeys("right"),
+		key.WithHelp("→", "focus deck"),
 	),
 	Top: key.NewBinding(
 		key.WithKeys("g"),

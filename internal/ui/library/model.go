@@ -417,18 +417,37 @@ func (m *Model) moveCursor(delta int) tea.Cmd {
 
 // visibleRows returns the number of card rows that fit in the list area,
 // reserving space for the 3 fixed header rows and 1 scroll-hint row, plus
-// the top/bottom border rows drawn around the panel when it has focus
-// (renderLayout wraps it in a DoubleBorder, which adds 2 rows on top of
-// its content — without this the panel overflows its height budget).
+// the top/bottom border rows always drawn around the panel (renderLayout
+// wraps it in a DoubleBorder unconditionally now — invisible when
+// unfocused — which adds 2 rows on top of its content).
 func (m Model) visibleRows() int {
-	v := m.listH - 4
-	if m.panelFocus == FocusLibrary {
-		v -= 2
-	}
+	v := m.listH - 4 - 2
 	if v < 0 {
 		return 0
 	}
 	return v
+}
+
+// splitHeights returns the fixed height allocation for the right pane's
+// top (card detail) and bottom (deck) panels. The split is a constant
+// 50/50 of the terminal height so it never shifts with content length or
+// panel focus.
+func (m Model) splitHeights() (topH, bottomH int) {
+	topH = m.height / 2
+	bottomH = m.height - topH
+	return topH, bottomH
+}
+
+// deckContentHeight returns the number of lines available for the deck
+// panel's own content, after the always-reserved top/bottom border rows
+// (see splitHeights and renderLayout).
+func (m Model) deckContentHeight() int {
+	_, bottomH := m.splitHeights()
+	h := bottomH - 2
+	if h < 0 {
+		return 0
+	}
+	return h
 }
 
 func (m *Model) scrollToSelected() {
@@ -497,11 +516,11 @@ func (m *Model) scrollDeckToSelected() {
 	}
 }
 
-// visibleDeckRows returns the number of deck entries that fit in the deck panel
+// visibleDeckRows returns the number of deck entries that fit in the deck
+// panel, reserving space for the panel's title/divider/header lines (see
+// renderDeckPanel).
 func (m Model) visibleDeckRows() int {
-	deckH := m.height * 45 / 100
-	// Reserve space for header (2 lines) and leave room
-	v := deckH - 3
+	v := m.deckContentHeight() - 3
 	if v < 0 {
 		return 0
 	}
@@ -581,15 +600,6 @@ func (m Model) View() string {
 		imagePath = filepath.Join(m.imageDir, m.selected.DefaultImagePath)
 	}
 
-	// The deck panel gets a DoubleBorder (2 extra rows) when it has focus;
-	// shrink its content budget to match or the border pushes the total
-	// render past the terminal height (see visibleRows for the same issue
-	// on the list panel).
-	deckBudgetH := m.height * 45 / 100
-	if m.panelFocus == FocusDeck {
-		deckBudgetH -= 2
-	}
-
 	// Card names for the deck panel — sourced from the currently loaded card
 	// list rather than a separate cache, since that's the same data set
 	// syncSelectionToDeckEntry relies on to find deck entries by code.
@@ -598,9 +608,11 @@ func (m Model) View() string {
 		cardNames[c.CardCode] = c.Name
 	}
 
-	list := renderList(m)
-	detail := renderDetail(m.selected, m.width-m.listW, m.height*55/100, imagePath)
-	deckList := renderDeckPanel(m.activeDeck, m.width-m.listW, deckBudgetH, m.deckEntryCursor, m.deckEntryOffset, cardNames)
+	topH, bottomH := m.splitHeights()
 
-	return renderLayout(list, detail, deckList, m.listW, m.width, m.height, m.panelFocus, m.activeDeck != nil)
+	list := renderList(m)
+	detail := renderDetail(m.selected, m.width-m.listW, topH, imagePath)
+	deckList := renderDeckPanel(m.activeDeck, m.width-m.listW-2, m.deckContentHeight(), m.deckEntryCursor, m.deckEntryOffset, cardNames)
+
+	return renderLayout(list, detail, deckList, m.listW, m.width, m.height, m.panelFocus, m.activeDeck != nil, topH, bottomH)
 }
