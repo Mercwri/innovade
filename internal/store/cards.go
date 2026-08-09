@@ -67,11 +67,12 @@ func (s *Store) QueryCards(q models.CardQuery) ([]models.Card, error) {
 		}
 	}
 	if len(f.PilotLinkNames) > 0 || len(f.PilotLinkTraits) > 0 {
-		// Match pilots by name (Pilot cards) OR by pilot-name in effect (Command-Pilot cards).
+		// Match pilots by name (Pilot cards), by pilot-name in effect (Command-Pilot
+		// cards), or by an alias declared in effect/burst text ("...treated as [Name]").
 		var termConds []string
 		for _, name := range f.PilotLinkNames {
-			termConds = append(termConds, "(c.name LIKE ? OR c.effect LIKE ?)")
-			args = append(args, "%"+name+"%", "%["+name+"]%")
+			termConds = append(termConds, "(c.name LIKE ? OR c.effect LIKE ? OR c.burst LIKE ?)")
+			args = append(args, "%"+name+"%", "%["+name+"]%", "%["+name+"]%")
 		}
 		for _, trait := range f.PilotLinkTraits {
 			termConds = append(termConds, "EXISTS (SELECT 1 FROM card_types ct_lt WHERE ct_lt.card_code = c.card_code AND LOWER(ct_lt.type) = LOWER(?))")

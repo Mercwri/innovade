@@ -219,6 +219,36 @@ func (c *Card) ExtractPilotName() string {
 	return strings.TrimSpace(rest[:end])
 }
 
+// AliasMarker precedes a pilot name in the "This card's name is also treated
+// as [Name]" clause some Pilot cards use to substitute for another named
+// pilot for linking purposes. It can appear in either Effect or Burst text.
+const AliasMarker = "treated as ["
+
+// AliasNames returns every pilot name this card's own name is also treated
+// as, per the AliasMarker clause in its Effect and/or Burst text.
+func (c *Card) AliasNames() []string {
+	var names []string
+	for _, text := range [2]string{c.Effect, c.Burst} {
+		pos := 0
+		for {
+			rel := strings.Index(text[pos:], AliasMarker)
+			if rel == -1 {
+				break
+			}
+			start := pos + rel + len(AliasMarker)
+			end := strings.Index(text[start:], "]")
+			if end == -1 {
+				break
+			}
+			if name := strings.TrimSpace(text[start : start+end]); name != "" {
+				names = append(names, name)
+			}
+			pos = start + end + 1
+		}
+	}
+	return names
+}
+
 // ParseLinkTerms splits the link requirement into pilot names (from "[Name]") and
 // trait names (from "(Trait)"), returning them separately for precise SQL matching.
 //

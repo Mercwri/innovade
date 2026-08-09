@@ -393,9 +393,12 @@ func buildLinkFilter(card *models.Card) (models.CardFilter, bool) {
 				linkName = pn
 			}
 		}
+		// A pilot may also be "treated as" another named pilot (e.g. Ple-Twelve
+		// as Marida Cruz), which satisfies that pilot's own link requirements too.
+		linkNames := append([]string{linkName}, card.AliasNames()...)
 		return models.CardFilter{
 			Categories:     []models.Category{models.CategoryUnit},
-			UnitLinkNames:  []string{linkName},
+			UnitLinkNames:  linkNames,
 			UnitLinkTraits: unitTraits,
 			Description:    "units for " + linkName,
 		}, true

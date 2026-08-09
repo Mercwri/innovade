@@ -455,11 +455,19 @@ func computeLinks(deck *models.Deck, cards map[string]models.Card) []linkPair {
 					linkName = pn
 				}
 			}
+			// A pilot may also be "treated as" another named pilot (e.g. Ple-Twelve
+			// as Marida Cruz), which satisfies that pilot's own link requirements too.
+			candidateNames := append([]string{linkName}, pilot.AliasNames()...)
 
 			matched := false
 			for _, name := range names {
-				if strings.EqualFold(name, linkName) {
-					matched = true
+				for _, cand := range candidateNames {
+					if strings.EqualFold(name, cand) {
+						matched = true
+						break
+					}
+				}
+				if matched {
 					break
 				}
 			}
