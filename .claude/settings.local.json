@@ -24,7 +24,22 @@
       "Bash(rm -rf /home/mercwri/innovade/cmd/debugview /tmp/innovade-test /tmp/pane_*.txt /tmp/dbg*.txt *)",
       "Bash(git -C /home/mercwri/innovade diff --stat)",
       "Bash(git -C /home/mercwri/innovade diff internal/ui/keys/keys.go)",
-      "Bash(git -C /home/mercwri/innovade diff internal/ui/library/list.go)"
+      "Bash(git -C /home/mercwri/innovade diff internal/ui/library/list.go)",
+      "Bash(python3 -c ' *)",
+      "Bash(sqlite3 ~/.local/share/innovade/innovade.db \"SELECT DISTINCT link_requirement FROM cards WHERE link_requirement != '' ORDER BY link_requirement;\")",
+      "Bash(sqlite3 ~/.local/share/innovade/innovade.db \"SELECT DISTINCT link_requirement FROM cards WHERE link_requirement != '' AND link_requirement NOT LIKE '%[%' AND link_requirement NOT LIKE '%\\(%';\")",
+      "Bash(sqlite3 ~/.local/share/innovade/innovade.db \"SELECT card_code, name, link_requirement FROM cards WHERE link_requirement IN \\('M''Quve','Garrod Ran & Tiffa Adill'\\);\")",
+      "Bash(sqlite3 ~/.local/share/innovade/innovade.db \"SELECT COUNT\\(*\\) FROM cards WHERE link_requirement != '';\")",
+      "Bash(sqlite3 -header -column ~/.local/share/innovade/innovade.db \"SELECT card_code, name, category, link_requirement FROM cards WHERE link_requirement IN \\('\\(Char Aznable\\)','\\(Zeon\\)'\\);\")",
+      "Bash(sqlite3 -header -column ~/.local/share/innovade/innovade.db \"SELECT DISTINCT type FROM card_types WHERE type LIKE '%Char%';\")",
+      "Bash(sqlite3 -header -column ~/.local/share/innovade/innovade.db \"SELECT card_code, name, category FROM cards WHERE name LIKE '%Char Aznable%';\")",
+      "Bash(sqlite3 -header -column ~/.local/share/innovade/innovade.db \"SELECT COUNT\\(*\\) FROM card_types WHERE type LIKE '\\(%\\)\\(%' OR type LIKE '\\(%\\) \\(%';\")",
+      "Bash(sqlite3 -column ~/.local/share/innovade/innovade.db \"SELECT DISTINCT type FROM card_types WHERE type LIKE '\\(%\\)\\(%' OR type LIKE '\\(%\\) \\(%';\")",
+      "Bash(sqlite3 -header -column ~/.local/share/innovade/innovade.db \"SELECT COUNT\\(*\\) AS paren_wrapped_types FROM card_types WHERE type LIKE '\\(%';\")",
+      "Bash(sqlite3 -column ~/.local/share/innovade/innovade.db \"SELECT DISTINCT type FROM card_types WHERE type LIKE '\\(%' ORDER BY type;\")",
+      "Bash(sqlite3 -header -column ~/.local/share/innovade/innovade.db ' *)",
+      "Bash(sqlite3 -column ~/.local/share/innovade/innovade.db \"SELECT DISTINCT type FROM card_types WHERE LOWER\\(type\\) IN \\('zeon','marine','militia','newtype','warship','clan','earth federation','cyber-newtype','neo zeon','vulture','civilian'\\) ORDER BY type;\")",
+      "Bash(sqlite3 -column ~/.local/share/innovade/innovade.db \"SELECT DISTINCT type FROM card_types WHERE LOWER\\(type\\)='marine';\")"
     ],
     "additionalDirectories": [
       "/tmp"

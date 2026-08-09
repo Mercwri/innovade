@@ -37,7 +37,6 @@ var (
 	imgHeader  = color.RGBA{0xF9, 0xFA, 0xFB, 0xff}
 	imgMuted   = color.RGBA{0x9C, 0xA3, 0xAF, 0xff}
 	imgValue   = color.RGBA{0xD1, 0xD5, 0xDB, 0xff}
-	imgBurst   = color.RGBA{0xFC, 0xD3, 0x4D, 0xff}
 )
 
 var (
@@ -92,21 +91,6 @@ func (c *imgCanvas) strokeRect(r image.Rectangle, col color.Color, thickness int
 	c.fill(image.Rect(r.Min.X, r.Max.Y-thickness, r.Max.X, r.Max.Y), col)
 	c.fill(image.Rect(r.Min.X, r.Min.Y, r.Min.X+thickness, r.Max.Y), col)
 	c.fill(image.Rect(r.Max.X-thickness, r.Min.Y, r.Max.X, r.Max.Y), col)
-}
-
-func (c *imgCanvas) fillCircle(cx, cy, radius int, col color.Color) {
-	rr := radius * radius
-	for y := -radius; y <= radius; y++ {
-		for x := -radius; x <= radius; x++ {
-			if x*x+y*y > rr {
-				continue
-			}
-			p := image.Point{X: cx + x, Y: cy + y}
-			if p.In(c.img.Bounds()) {
-				c.img.Set(p.X, p.Y, col)
-			}
-		}
-	}
 }
 
 // drawText draws s with its baseline at (x, y).
@@ -245,7 +229,8 @@ func renderDeckImage(deck *models.Deck, cards map[string]models.Card, imageDir s
 	// ── Card grid ──────────────────────────────────────────────────────────
 	gridTop := imgMargin + imgTitleH
 	qtyFace := newFace(monoFont, 15)
-	for i, e := range deck.Entries {
+	entries := sortedEntriesForExport(deck.Entries, cards)
+	for i, e := range entries {
 		col := i % cols
 		row := i / cols
 		x := imgMargin + cellGap + col*cellW
@@ -260,11 +245,10 @@ func renderDeckImage(deck *models.Deck, cards map[string]models.Card, imageDir s
 		}
 		c.strokeRect(thumbRect, imgBorder, 2)
 
+		qty := fmt.Sprintf("%s ×%d", card.CardCode, e.Quantity)
 		if card.HasBurst() {
-			c.fillCircle(x+thumbW-12, y+12, 8, imgBurst)
+			qty = "· " + qty
 		}
-
-		qty := fmt.Sprintf("×%d", e.Quantity)
 		c.drawTextCentered(x+thumbW/2, y+thumbH+qtyLabelH-10, qty, qtyFace, imgValue)
 	}
 
@@ -280,6 +264,39 @@ func renderDeckImage(deck *models.Deck, cards map[string]models.Card, imageDir s
 	c.drawPanel(p3x, panelY, panelW, panelH, "Links", linkLines)
 
 	return c.img
+}
+
+// exportCategoryOrder ranks entries for the shared image: Units, then Pilots,
+// then Commands, then Bases (and anything else last), by card code within
+// each group.
+var exportCategoryOrder = map[models.Category]int{
+	models.CategoryUnit:    0,
+	models.CategoryPilot:   1,
+	models.CategoryCommand: 2,
+	models.CategoryBase:    3,
+}
+
+// sortedEntriesForExport returns deck entries ordered for the image grid,
+// leaving deck.Entries (the player's arrangement) untouched.
+func sortedEntriesForExport(entries []models.DeckEntry, cards map[string]models.Card) []models.DeckEntry {
+	sorted := make([]models.DeckEntry, len(entries))
+	copy(sorted, entries)
+
+	rank := func(e models.DeckEntry) int {
+		if r, ok := exportCategoryOrder[cards[e.CardCode].Category]; ok {
+			return r
+		}
+		return len(exportCategoryOrder)
+	}
+
+	sort.Slice(sorted, func(i, j int) bool {
+		ri, rj := rank(sorted[i]), rank(sorted[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return sorted[i].CardCode < sorted[j].CardCode
+	})
+	return sorted
 }
 
 func (c *imgCanvas) drawPlaceholderThumb(r image.Rectangle, label string) {

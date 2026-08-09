@@ -221,26 +221,34 @@ func (c *Card) ExtractPilotName() string {
 
 // ParseLinkTerms splits the link requirement into pilot names (from "[Name]") and
 // trait names (from "(Trait)"), returning them separately for precise SQL matching.
+//
+// Bracketed names are cut out of the string before the trait pass runs, so a
+// name containing its own parens (e.g. "[Amate Yuzuriha (Machu)]") doesn't leak
+// a bogus trait term.
 func (c *Card) ParseLinkTerms() (names []string, traits []string) {
 	if c.LinkRequirement == "" {
 		return nil, nil
 	}
+	var traitScan strings.Builder
 	s := c.LinkRequirement
 	for {
 		start := strings.Index(s, "[")
 		if start == -1 {
+			traitScan.WriteString(s)
 			break
 		}
 		end := strings.Index(s[start:], "]")
 		if end == -1 {
+			traitScan.WriteString(s)
 			break
 		}
 		if term := strings.TrimSpace(s[start+1 : start+end]); term != "" {
 			names = append(names, term)
 		}
+		traitScan.WriteString(s[:start])
 		s = s[start+end+1:]
 	}
-	s = c.LinkRequirement
+	s = traitScan.String()
 	for {
 		start := strings.Index(s, "(")
 		if start == -1 {

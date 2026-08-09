@@ -330,7 +330,26 @@ func (m AppModel) renderHeader() string {
 	left := styles.StyleHeader.Render("INNOVADE")
 	right := styles.StyleHeaderMuted.Render("[⇧1] library  [⇧2] decks  [?] palette")
 
-	centerWidth := max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 0)
+	leftWidth := lipgloss.Width(left)
+	rightWidth := lipgloss.Width(right)
+
+	// left+right must never exceed m.width: if they did, the joined header
+	// would be wider than the terminal, causing it to soft-wrap onto a
+	// second row. Every view sizes its body as m.height-1 assuming a
+	// single-row header, so that wrap pushes the body's last row off
+	// screen — the "top bar clips out" symptom. Hints truncate first,
+	// the app name only as a last resort on very narrow terminals.
+	if leftWidth+rightWidth > m.width {
+		right = styles.StyleHeaderMuted.MaxWidth(max(m.width-leftWidth, 0)).
+			Render("[⇧1] library  [⇧2] decks  [?] palette")
+		rightWidth = lipgloss.Width(right)
+	}
+	if leftWidth+rightWidth > m.width {
+		left = styles.StyleHeader.MaxWidth(m.width).Render("INNOVADE")
+		leftWidth = lipgloss.Width(left)
+	}
+
+	centerWidth := max(m.width-leftWidth-rightWidth, 0)
 	center := styles.StyleHeader.Width(centerWidth).Align(lipgloss.Center).Render(viewLabel(m.activeView))
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, center, right)
