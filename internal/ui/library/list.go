@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Mercwri/innovade/internal/models"
+	"github.com/Mercwri/innovade/internal/ui/curve"
 	"github.com/Mercwri/innovade/internal/ui/styles"
 )
 
@@ -190,7 +191,11 @@ func renderLayout(list, detail, deckPanel string, listW, w, h int, focus PanelFo
 	return lipgloss.JoinHorizontal(lipgloss.Top, listRendered, detailRendered)
 }
 
-func renderDeckPanel(deck *models.Deck, width, height int, cursor int, offset int, cardNames map[string]string) string {
+// curvePanelHeight is the number of lines the curve section occupies at the
+// bottom of the deck panel: a divider plus curve.Data.Grid()'s 7 rows.
+const curvePanelHeight = 1 + 7
+
+func renderDeckPanel(deck *models.Deck, cv curve.Data, showCurve bool, width, height int, cursor int, offset int, cardNames map[string]string) string {
 	if deck == nil {
 		return styles.StyleDetailPanel.Width(width - 1).Height(height).Render(
 			styles.StyleDetailLabel.Render("No deck selected"),
@@ -199,8 +204,18 @@ func renderDeckPanel(deck *models.Deck, width, height int, cursor int, offset in
 
 	var sb strings.Builder
 
-	// Title
-	sb.WriteString(styles.StyleDetailTitle.Render(truncate(deck.Name, width-3)))
+	// Title row: deck name left, running total right.
+	progress := fmt.Sprintf("%d / %d", deck.TotalCards(), models.DeckMaxSize)
+	nameW := width - 3 - len(progress) - 1
+	if nameW < 1 {
+		nameW = 1
+	}
+	progressStyle := styles.StyleDetailLabel
+	if deck.TotalCards() >= models.DeckMaxSize {
+		progressStyle = styles.StyleDetailTitle
+	}
+	sb.WriteString(styles.StyleDetailTitle.Width(nameW).Render(truncate(deck.Name, nameW-1)))
+	sb.WriteString(progressStyle.Width(len(progress) + 1).Align(lipgloss.Right).Render(progress))
 	sb.WriteString("\n")
 	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", width-3)))
 	sb.WriteString("\n")
@@ -212,19 +227,22 @@ func renderDeckPanel(deck *models.Deck, width, height int, cursor int, offset in
 
 	// Column headers
 	const codeW, qtyW = 9, 4
-	nameW := width - codeW - qtyW - 2
-	if nameW < 1 {
-		nameW = 1
+	nameColW := width - codeW - qtyW - 2
+	if nameColW < 1 {
+		nameColW = 1
 	}
 
 	sb.WriteString(styles.StyleColumnHeader.Width(codeW).Render("Code"))
-	sb.WriteString(styles.StyleColumnHeader.Width(nameW).Render("Name"))
+	sb.WriteString(styles.StyleColumnHeader.Width(nameColW).Render("Name"))
 	sb.WriteString(styles.StyleColumnHeader.Width(qtyW).Align(lipgloss.Right).Render("Qty"))
 	sb.WriteString("\n")
 
-	// Entries (limited to visible height)
-	// Reserve space for title (1), divider (1), headers (1), totaling 3 lines
+	// Entries (limited to visible height).
+	// Reserve title (1), divider (1), headers (1); plus the curve section when shown.
 	vr := height - 3
+	if showCurve {
+		vr -= curvePanelHeight
+	}
 	if vr < 1 {
 		vr = 1
 	}
@@ -232,6 +250,7 @@ func renderDeckPanel(deck *models.Deck, width, height int, cursor int, offset in
 	if end > len(deck.Entries) {
 		end = len(deck.Entries)
 	}
+	rows := 0
 	for i := offset; i < end; i++ {
 		e := deck.Entries[i]
 		rowStyle := styles.StyleRowNormal
@@ -243,11 +262,26 @@ func renderDeckPanel(deck *models.Deck, width, height int, cursor int, offset in
 			displayName = n
 		}
 		code := rowStyle.Width(codeW).Render(e.CardCode)
-		name := rowStyle.Width(nameW).Render(truncate(displayName, nameW-1))
+		name := rowStyle.Width(nameColW).Render(truncate(displayName, nameColW-1))
 		qty := rowStyle.Width(qtyW).Align(lipgloss.Right).Render(fmt.Sprintf("×%d", e.Quantity))
 		sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, code, name, qty))
 		sb.WriteString("\n")
+		rows++
 	}
+
+	if !showCurve {
+		return sb.String()
+	}
+
+	// Pad the entry area so the curve grid stays pinned to the bottom of the
+	// panel regardless of how many entries are visible.
+	for ; rows < vr; rows++ {
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", width-3)))
+	sb.WriteString("\n")
+	sb.WriteString(strings.TrimRight(cv.Grid(), "\n"))
 
 	return sb.String()
 }

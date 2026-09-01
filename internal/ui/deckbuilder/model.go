@@ -11,6 +11,7 @@ import (
 
 	"github.com/Mercwri/innovade/internal/models"
 	"github.com/Mercwri/innovade/internal/store"
+	"github.com/Mercwri/innovade/internal/ui/curve"
 	"github.com/Mercwri/innovade/internal/ui/styles"
 )
 
@@ -525,7 +526,7 @@ func (m Model) renderLeft(w int) string {
 	// Analysis section
 	sb.WriteString(div)
 	sb.WriteString("\n")
-	sb.WriteString(m.renderCurveGrid(w))
+	sb.WriteString(m.renderCurveGrid())
 
 	// Hints
 	sb.WriteString(div)
@@ -584,141 +585,19 @@ func (m Model) renderDeckRow(deckIdx int, w int) string {
 }
 
 // renderCurveGrid draws the level×category grid, a totals row, and a bar chart.
-func (m Model) renderCurveGrid(w int) string {
-	const (
-		minLv  = 1
-		maxLv  = 9
-		catW   = 4 // label column width
-		colW   = 3 // per-level and Σ column width
-		chartH = 4 // bar chart height in rows
-	)
-
-	type catDef struct {
-		label string
-		kind  models.Category
+func (m Model) renderCurveGrid() string {
+	var entries []models.DeckEntry
+	if deck := m.selectedDeck(); deck != nil {
+		entries = deck.Entries
 	}
-	cats := []catDef{
-		{"Unt", models.CategoryUnit},
-		{"Cmd", models.CategoryCommand},
-		{"Plt", models.CategoryPilot},
-		{"Bas", models.CategoryBase},
-	}
-
-	deck := m.selectedDeck()
-
-	// counts[cat][level], totals[level]
-	counts := [4][maxLv + 1]int{}
-	var lvTotals [maxLv + 1]int
-	if deck != nil {
-		for _, e := range deck.Entries {
-			s, ok := m.cardStats[e.CardCode]
-			if !ok {
-				continue
-			}
-			lv := s.Level
-			if lv < 0 {
-				lv = 0
-			}
-			if lv > maxLv {
-				lv = maxLv
-			}
-			lvTotals[lv] += e.Quantity
-			for ci, cat := range cats {
-				if s.Category == cat.kind {
-					counts[ci][lv] += e.Quantity
-				}
-			}
+	d := curve.Compute(entries, func(code string) (models.Category, int, bool) {
+		s, ok := m.cardStats[code]
+		if !ok {
+			return "", 0, false
 		}
-	}
-
-	var sb strings.Builder
-
-	// ── Header row ────────────────────────────────────────────────────────────
-	hdr := fmt.Sprintf("%-*s", catW, "")
-	for lv := minLv; lv <= maxLv; lv++ {
-		hdr += fmt.Sprintf("%*d", colW, lv)
-	}
-	hdr += fmt.Sprintf("%*s", colW, "Σ")
-	sb.WriteString(styles.StyleColumnHeader.Render(hdr))
-	sb.WriteString("\n")
-
-	// ── Category rows ─────────────────────────────────────────────────────────
-	for ci, cat := range cats {
-		total := 0
-		row := fmt.Sprintf("%-*s", catW, cat.label)
-		for lv := minLv; lv <= maxLv; lv++ {
-			n := counts[ci][lv]
-			total += n
-			if n == 0 {
-				row += fmt.Sprintf("%*s", colW, "·")
-			} else {
-				row += fmt.Sprintf("%*d", colW, n)
-			}
-		}
-		if total == 0 {
-			row += fmt.Sprintf("%*s", colW, "·")
-		} else {
-			row += fmt.Sprintf("%*d", colW, total)
-		}
-		sb.WriteString(styles.StyleDetailLabel.Render(row))
-		sb.WriteString("\n")
-	}
-
-	// ── Totals row ────────────────────────────────────────────────────────────
-	divLen := catW + (maxLv-minLv+1)*colW + colW
-	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", divLen)))
-	sb.WriteString("\n")
-
-	grandTotal := 0
-	totRow := fmt.Sprintf("%-*s", catW, "Tot")
-	for lv := minLv; lv <= maxLv; lv++ {
-		n := lvTotals[lv]
-		grandTotal += n
-		if n == 0 {
-			totRow += fmt.Sprintf("%*s", colW, "·")
-		} else {
-			totRow += fmt.Sprintf("%*d", colW, n)
-		}
-	}
-	if grandTotal == 0 {
-		totRow += fmt.Sprintf("%*s", colW, "·")
-	} else {
-		totRow += fmt.Sprintf("%*d", colW, grandTotal)
-	}
-	sb.WriteString(styles.StyleDetailValue.Render(totRow))
-	sb.WriteString("\n")
-
-	// ── Bar chart (level distribution) ───────────────────────────────────────
-	maxV := 0
-	for lv := minLv; lv <= maxLv; lv++ {
-		if lvTotals[lv] > maxV {
-			maxV = lvTotals[lv]
-		}
-	}
-
-	for row := chartH; row >= 1; row-- {
-		line := fmt.Sprintf("%-*s", catW, "")
-		for lv := minLv; lv <= maxLv; lv++ {
-			var cell string
-			if maxV > 0 && lvTotals[lv]*chartH/maxV >= row {
-				cell = "█"
-			} else {
-				cell = " "
-			}
-			line += fmt.Sprintf("%*s", colW, cell)
-		}
-		sb.WriteString(styles.StyleDetailValue.Render(line))
-		sb.WriteString("\n")
-	}
-	// Axis label row
-	axis := fmt.Sprintf("%-*s", catW, "")
-	for lv := minLv; lv <= maxLv; lv++ {
-		axis += fmt.Sprintf("%*d", colW, lv)
-	}
-	sb.WriteString(styles.StyleDetailLabel.Render(axis))
-	sb.WriteString("\n")
-
-	return sb.String()
+		return s.Category, s.Level, true
+	})
+	return d.Grid() + d.Bars(4)
 }
 
 // ── Right pane ────────────────────────────────────────────────────────────────

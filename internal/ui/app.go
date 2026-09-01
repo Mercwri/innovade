@@ -225,6 +225,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deckbuilder, cmd = m.deckbuilder.Update(msg)
 			return m, cmd
 		}
+		if m.activeView == ViewLibrary && m.library.Capturing() {
+			var cmd tea.Cmd
+			m.library, cmd = m.library.Update(msg)
+			return m, cmd
+		}
 
 		// Global quit — save session then exit
 		if key.Matches(msg, Global.Quit) {

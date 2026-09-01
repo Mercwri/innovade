@@ -12,6 +12,7 @@ import (
 
 	"github.com/Mercwri/innovade/internal/models"
 	"github.com/Mercwri/innovade/internal/store"
+	"github.com/Mercwri/innovade/internal/ui/curve"
 	"github.com/Mercwri/innovade/internal/ui/keys"
 )
 
@@ -58,6 +59,11 @@ type Model struct {
 	deckEntryCursor int // selected deck entry index
 	deckEntryOffset int // first visible deck entry
 
+	// deckStats holds level/category for the active deck's cards so the deck
+	// panel can render its curve grid even for entries filtered out of the
+	// current card list. Refreshed whenever the card list reloads.
+	deckStats map[string]store.CardStat
+
 	// Art
 	imageDir       string          // local directory for cached card images
 	downloadingArt map[string]bool // card codes currently being fetched
@@ -68,8 +74,9 @@ type Model struct {
 
 // CardsLoadedMsg is sent when the initial card fetch completes.
 type CardsLoadedMsg struct {
-	Cards []models.Card
-	Err   error
+	Cards     []models.Card
+	DeckStats map[string]store.CardStat
+	Err       error
 }
 
 // FilterAppliedMsg is sent when the filter palette resolves a new filter.
@@ -107,6 +114,35 @@ func New(s *store.Store) (Model, error) {
 
 func (m Model) Init() tea.Cmd {
 	return m.ReloadCards()
+}
+
+// Capturing reports whether the model is consuming all key input (the
+// text-search field, the filter palette). app.go uses this to bypass global
+// hotkeys so characters like 'q' don't quit the app mid-typing.
+func (m Model) Capturing() bool {
+	return m.textInputOpen || m.filterPaletteOpen
+}
+
+// deckCurve tallies the active deck for the deck panel's curve grid. Stats
+// come from the dedicated deckStats load, falling back to the currently
+// loaded card list for entries added since the last reload.
+func (m Model) deckCurve() curve.Data {
+	if m.activeDeck == nil {
+		return curve.Data{}
+	}
+	cardByCode := make(map[string]*models.Card, len(m.cards))
+	for i := range m.cards {
+		cardByCode[m.cards[i].CardCode] = &m.cards[i]
+	}
+	return curve.Compute(m.activeDeck.Entries, func(code string) (models.Category, int, bool) {
+		if s, ok := m.deckStats[code]; ok {
+			return s.Category, s.Level, true
+		}
+		if c, ok := cardByCode[code]; ok {
+			return c.Category, c.Level, true
+		}
+		return "", 0, false
+	})
 }
 
 func (m *Model) ReloadCards() tea.Cmd {
@@ -181,6 +217,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.cards = msg.Cards
 		m.total = len(msg.Cards)
+		m.deckStats = msg.DeckStats
 		if m.activeDeck != nil {
 			sortDeckCardsFirst(m.cards, m.activeDeck)
 		}
@@ -453,6 +490,20 @@ func (m Model) deckContentHeight() int {
 	return h
 }
 
+// deckPanelWidth is the content width of the bottom-right deck panel, matching
+// what renderLayout allocates (see renderDeckPanel's callsite in View).
+func (m Model) deckPanelWidth() int {
+	return m.width - m.listW - 2
+}
+
+// deckCurveVisible reports whether the deck panel has room to draw its curve
+// grid. Kept in one place so entry-scroll math and rendering agree.
+func (m Model) deckCurveVisible() bool {
+	return m.activeDeck != nil && len(m.activeDeck.Entries) > 0 &&
+		m.deckPanelWidth()-3 >= curve.GridWidth &&
+		m.deckContentHeight() >= 3+curvePanelHeight+1
+}
+
 func (m *Model) scrollToSelected() {
 	vr := m.visibleRows()
 	if m.cursor < m.offset {
@@ -524,6 +575,9 @@ func (m *Model) scrollDeckToSelected() {
 // renderDeckPanel).
 func (m Model) visibleDeckRows() int {
 	v := m.deckContentHeight() - 3
+	if m.deckCurveVisible() {
+		v -= curvePanelHeight
+	}
 	if v < 0 {
 		return 0
 	}
@@ -558,15 +612,31 @@ func (m *Model) loadCards() tea.Cmd {
 	if m.filtersActive {
 		filter = m.filter
 	}
-	store := m.store
+	st := m.store
+
+	var deckCodes []string
+	if m.activeDeck != nil {
+		deckCodes = make([]string, 0, len(m.activeDeck.Entries))
+		for _, e := range m.activeDeck.Entries {
+			deckCodes = append(deckCodes, e.CardCode)
+		}
+	}
+
 	return func() tea.Msg {
 		q := models.CardQuery{
 			Filter: filter,
 			SortBy: models.SortByCardCode,
 			Order:  models.SortAsc,
 		}
-		cards, err := store.QueryCards(q)
-		return CardsLoadedMsg{Cards: cards, Err: err}
+		cards, err := st.QueryCards(q)
+		if err != nil {
+			return CardsLoadedMsg{Err: err}
+		}
+		stats, err := st.GetCardStatsByCodes(deckCodes)
+		if err != nil {
+			stats = map[string]store.CardStat{}
+		}
+		return CardsLoadedMsg{Cards: cards, DeckStats: stats}
 	}
 }
 
@@ -615,7 +685,7 @@ func (m Model) View() string {
 
 	list := renderList(m)
 	detail := renderDetail(m.selected, m.width-m.listW, topH, imagePath)
-	deckList := renderDeckPanel(m.activeDeck, m.width-m.listW-2, m.deckContentHeight(), m.deckEntryCursor, m.deckEntryOffset, cardNames)
+	deckList := renderDeckPanel(m.activeDeck, m.deckCurve(), m.deckCurveVisible(), m.deckPanelWidth(), m.deckContentHeight(), m.deckEntryCursor, m.deckEntryOffset, cardNames)
 
 	return renderLayout(list, detail, deckList, m.listW, m.width, m.height, m.panelFocus, m.activeDeck != nil, topH, bottomH)
 }

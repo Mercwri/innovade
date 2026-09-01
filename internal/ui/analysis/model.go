@@ -11,6 +11,7 @@ import (
 
 	"github.com/Mercwri/innovade/internal/models"
 	"github.com/Mercwri/innovade/internal/store"
+	"github.com/Mercwri/innovade/internal/ui/curve"
 	"github.com/Mercwri/innovade/internal/ui/styles"
 )
 
@@ -171,132 +172,18 @@ func (m Model) renderRight(w int) string {
 
 // renderGrid draws the level × category grid identical to the deckbuilder's curve display.
 func (m Model) renderGrid() string {
-	const (
-		minLv  = 1
-		maxLv  = 9
-		catW   = 4
-		colW   = 3
-		chartH = 4
-	)
-
-	type catDef struct {
-		label string
-		kind  models.Category
-	}
-	cats := []catDef{
-		{"Unt", models.CategoryUnit},
-		{"Cmd", models.CategoryCommand},
-		{"Plt", models.CategoryPilot},
-		{"Bas", models.CategoryBase},
-	}
-
-	counts := [4][maxLv + 1]int{}
-	var lvTotals [maxLv + 1]int
-
+	var entries []models.DeckEntry
 	if m.deck != nil {
-		for _, e := range m.deck.Entries {
-			card, ok := m.cards[e.CardCode]
-			if !ok {
-				continue
-			}
-			lv := card.Level
-			if lv < 0 {
-				lv = 0
-			}
-			if lv > maxLv {
-				lv = maxLv
-			}
-			lvTotals[lv] += e.Quantity
-			for ci, cat := range cats {
-				if card.Category == cat.kind {
-					counts[ci][lv] += e.Quantity
-				}
-			}
+		entries = m.deck.Entries
+	}
+	d := curve.Compute(entries, func(code string) (models.Category, int, bool) {
+		card, ok := m.cards[code]
+		if !ok {
+			return "", 0, false
 		}
-	}
-
-	var sb strings.Builder
-
-	hdr := fmt.Sprintf("%-*s", catW, "")
-	for lv := minLv; lv <= maxLv; lv++ {
-		hdr += fmt.Sprintf("%*d", colW, lv)
-	}
-	hdr += fmt.Sprintf("%*s", colW, "Σ")
-	sb.WriteString(styles.StyleColumnHeader.Render(hdr))
-	sb.WriteString("\n")
-
-	for ci, cat := range cats {
-		total := 0
-		row := fmt.Sprintf("%-*s", catW, cat.label)
-		for lv := minLv; lv <= maxLv; lv++ {
-			n := counts[ci][lv]
-			total += n
-			if n == 0 {
-				row += fmt.Sprintf("%*s", colW, "·")
-			} else {
-				row += fmt.Sprintf("%*d", colW, n)
-			}
-		}
-		if total == 0 {
-			row += fmt.Sprintf("%*s", colW, "·")
-		} else {
-			row += fmt.Sprintf("%*d", colW, total)
-		}
-		sb.WriteString(styles.StyleDetailLabel.Render(row))
-		sb.WriteString("\n")
-	}
-
-	divLen := catW + (maxLv-minLv+1)*colW + colW
-	sb.WriteString(styles.StyleDetailDivider.Render(strings.Repeat("─", divLen)))
-	sb.WriteString("\n")
-
-	grandTotal := 0
-	totRow := fmt.Sprintf("%-*s", catW, "Tot")
-	for lv := minLv; lv <= maxLv; lv++ {
-		n := lvTotals[lv]
-		grandTotal += n
-		if n == 0 {
-			totRow += fmt.Sprintf("%*s", colW, "·")
-		} else {
-			totRow += fmt.Sprintf("%*d", colW, n)
-		}
-	}
-	if grandTotal == 0 {
-		totRow += fmt.Sprintf("%*s", colW, "·")
-	} else {
-		totRow += fmt.Sprintf("%*d", colW, grandTotal)
-	}
-	sb.WriteString(styles.StyleDetailValue.Render(totRow))
-	sb.WriteString("\n")
-
-	maxV := 0
-	for lv := minLv; lv <= maxLv; lv++ {
-		if lvTotals[lv] > maxV {
-			maxV = lvTotals[lv]
-		}
-	}
-	for row := chartH; row >= 1; row-- {
-		line := fmt.Sprintf("%-*s", catW, "")
-		for lv := minLv; lv <= maxLv; lv++ {
-			var cell string
-			if maxV > 0 && lvTotals[lv]*chartH/maxV >= row {
-				cell = "█"
-			} else {
-				cell = " "
-			}
-			line += fmt.Sprintf("%*s", colW, cell)
-		}
-		sb.WriteString(styles.StyleDetailValue.Render(line))
-		sb.WriteString("\n")
-	}
-	axis := fmt.Sprintf("%-*s", catW, "")
-	for lv := minLv; lv <= maxLv; lv++ {
-		axis += fmt.Sprintf("%*d", colW, lv)
-	}
-	sb.WriteString(styles.StyleDetailLabel.Render(axis))
-	sb.WriteString("\n")
-
-	return sb.String()
+		return card.Category, card.Level, true
+	})
+	return d.Grid() + d.Bars(4)
 }
 
 // renderBursts shows burst card count and the cumulative hypergeometric
